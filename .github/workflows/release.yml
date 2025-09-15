@@ -439,7 +439,7 @@ jobs:
         run: |
           # This would publish to your Helm repository
           echo "Publishing Helm chart to repository..."
-          # helm repo add n8n-operator https://charts.n8n.io
+          # helm repo add n8n-operator https://lxhiguera.github.io/n8n-eks-operator
           # helm repo update
           # helm push dist/n8n-eks-operator-*.tgz n8n-operator
 

@@ -1,0 +1,118 @@
+name: GitHub Pages Helm Repository
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'charts/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.1'
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Build Helm Charts
+        run: |
+          # Create docs directory for GitHub Pages
+          mkdir -p docs
+          
+          # Package all charts
+          for chart in charts/*/; do
+            if [ -f "$chart/Chart.yaml" ]; then
+              echo "Packaging chart: $chart"
+              helm package "$chart" --destination docs/
+            fi
+          done
+          
+          # Generate index.yaml
+          helm repo index docs/ --url https://lxhiguera.github.io/n8n-eks-operator/
+          
+          # Create a simple index.html for the repository
+          cat > docs/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>n8n EKS Operator Helm Repository</title>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  .header { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+                  .code { background: #f1f3f4; padding: 10px; border-radius: 4px; font-family: monospace; }
+                  .chart { background: #fff; border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; }
+              </style>
+          </head>
+          <body>
+              <div class="header">
+                  <h1>🚀 n8n EKS Operator Helm Repository</h1>
+                  <p>Community Kubernetes operator for n8n on EKS with enterprise features</p>
+              </div>
+              
+              <h2>📦 Installation</h2>
+              <div class="code">
+                  helm repo add n8n-operator https://lxhiguera.github.io/n8n-eks-operator<br>
+                  helm repo update<br>
+                  helm install n8n-operator n8n-operator/n8n-eks-operator
+              </div>
+              
+              <h2>📋 Available Charts</h2>
+              <div class="chart">
+                  <h3>n8n-eks-operator</h3>
+                  <p>Complete Kubernetes operator for managing n8n workflow automation instances on Amazon EKS</p>
+                  <p><strong>Features:</strong> AWS integration, enterprise security, full observability, multi-tenancy</p>
+              </div>
+              
+              <h2>🔗 Links</h2>
+              <ul>
+                  <li><a href="https://github.com/lxhiguera/n8n-eks-operator">📖 Documentation</a></li>
+                  <li><a href="https://github.com/lxhiguera/n8n-eks-operator/releases">🚀 Releases</a></li>
+                  <li><a href="https://github.com/lxhiguera/n8n-eks-operator/issues">🐛 Issues</a></li>
+                  <li><a href="index.yaml">📄 Repository Index</a></li>
+              </ul>
+              
+              <hr>
+              <p><em>Generated automatically by GitHub Actions</em></p>
+          </body>
+          </html>
+          EOF
+          
+          echo "Generated Helm repository:"
+          ls -la docs/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

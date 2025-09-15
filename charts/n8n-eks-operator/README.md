@@ -17,7 +17,7 @@ This Helm chart deploys the n8n EKS Operator on a Kubernetes cluster. The operat
 
 ```bash
 # Add the Helm repository
-helm repo add n8n-operator https://charts.n8n.io
+helm repo add n8n-operator https://lxhiguera.github.io/n8n-eks-operator
 helm repo update
 
 # Install the operator

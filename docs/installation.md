@@ -254,7 +254,7 @@ aws elasticache create-cache-cluster \
 ### Add Helm Repository
 
 ```bash
-helm repo add n8n-operator https://charts.lxhiguera.io
+helm repo add n8n-operator https://lxhiguera.github.io/n8n-eks-operator
 helm repo update
 ```
 

@@ -208,7 +208,7 @@ n8n-eks-operator/
 3. **✅ Documentation Complete**: Ready for community use
 
 ### Future Enhancements
-1. **Helm Repository**: Publish charts to public Helm repository
+1. **Helm Repository**: Publish charts to GitHub Pages (https://lxhiguera.github.io/n8n-eks-operator)
 2. **Community Engagement**: Promote in n8n and Kubernetes communities
 3. **Feature Requests**: Gather feedback and implement new features
 4. **Certification**: Kubernetes operator certification
