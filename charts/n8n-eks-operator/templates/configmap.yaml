@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-config
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  # Operator configuration
+  operator-config.yaml: |
+    operator:
+      logLevel: {{ .Values.logging.level | quote }}
+      logFormat: {{ .Values.logging.format | quote }}
+      development: {{ .Values.logging.development }}
+      enableCaller: {{ .Values.logging.enableCaller }}
+      enableStacktrace: {{ .Values.logging.enableStacktrace }}
+      
+      controller:
+        maxConcurrentReconciles: {{ .Values.controller.maxConcurrentReconciles }}
+        reconcileTimeout: {{ .Values.controller.reconcileTimeout | quote }}
+        syncPeriod: {{ .Values.controller.syncPeriod | quote }}
+        cacheSyncTimeout: {{ .Values.controller.cacheSyncTimeout | quote }}
+      
+      leaderElection:
+        enabled: {{ .Values.leaderElection.enabled }}
+        {{- if .Values.leaderElection.enabled }}
+        leaseDuration: {{ .Values.leaderElection.leaseDuration | quote }}
+        renewDeadline: {{ .Values.leaderElection.renewDeadline | quote }}
+        retryPeriod: {{ .Values.leaderElection.retryPeriod | quote }}
+        {{- end }}
+      
+      webhook:
+        enabled: {{ .Values.webhook.enabled }}
+        {{- if .Values.webhook.enabled }}
+        port: {{ .Values.webhookServer.port }}
+        certDir: {{ .Values.webhookServer.certDir | quote }}
+        tlsMinVersion: {{ .Values.webhookServer.tlsMinVersion | quote }}
+        {{- with .Values.webhookServer.tlsCipherSuites }}
+        tlsCipherSuites:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- end }}
+      
+      featureGates:
+        experimental: {{ .Values.featureGates.experimental }}
+        alpha: {{ .Values.featureGates.alpha }}
+        beta: {{ .Values.featureGates.beta }}
+    
+    aws:
+      {{- if .Values.aws.region }}
+      region: {{ .Values.aws.region | quote }}
+      {{- end }}
+      {{- if .Values.aws.roleArn }}
+      roleArn: {{ .Values.aws.roleArn | quote }}
+      {{- end }}
+      
+    monitoring:
+      enabled: {{ .Values.monitoring.enabled }}
+      {{- if .Values.monitoring.enabled }}
+      serviceMonitor:
+        enabled: {{ .Values.monitoring.serviceMonitor.enabled }}
+        interval: {{ .Values.monitoring.serviceMonitor.interval | quote }}
+        scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | quote }}
+      prometheusRule:
+        enabled: {{ .Values.monitoring.prometheusRule.enabled }}
+      {{- end }}
+    
+    networkPolicy:
+      enabled: {{ .Values.networkPolicy.enabled }}
+    
+    podSecurityPolicy:
+      enabled: {{ .Values.podSecurityPolicy.enabled }}
+
+  # Default N8nInstance template
+  default-n8ninstance.yaml: |
+    apiVersion: n8n.io/v1alpha1
+    kind: N8nInstance
+    metadata:
+      name: example-n8n
+      namespace: default
+    spec:
+      {{- include "n8n-eks-operator.defaultN8nInstanceConfig" . | nindent 6 }}
+
+  # AWS tags configuration
+  aws-tags.yaml: |
+    {{- include "n8n-eks-operator.awsTags" . | nindent 4 }}

@@ -1,0 +1,493 @@
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-enterprise-multi-tenant
+  namespace: n8n-system
+spec:
+  # Base n8n configuration
+  image: n8nio/n8n:latest
+  replicas: 3
+  
+  # AWS Configuration
+  aws:
+    region: us-west-2
+    
+  # Database configuration
+  database:
+    type: postgres
+    postgres:
+      host: n8n-postgres.rds.amazonaws.com
+      port: 5432
+      database: n8n_enterprise
+      username: n8n_user
+      passwordSecret:
+        name: n8n-db-secret
+        key: password
+      ssl: true
+      
+  # Cache configuration
+  cache:
+    type: redis
+    redis:
+      host: n8n-redis.cache.amazonaws.com
+      port: 6379
+      database: 0
+      passwordSecret:
+        name: n8n-redis-secret
+        key: password
+      ssl: true
+      
+  # Storage configuration
+  storage:
+    type: s3
+    s3:
+      bucket: n8n-enterprise-storage
+      region: us-west-2
+      
+  # Ingress configuration
+  ingress:
+    enabled: true
+    host: n8n-enterprise.company.com
+    tls:
+      enabled: true
+      certificateArn: arn:aws:acm:us-west-2:123456789012:certificate/12345678-1234-1234-1234-123456789012
+      
+  # Enterprise features
+  enterprise:
+    enabled: true
+    
+    # Multi-tenancy configuration
+    multiTenancy:
+      enabled: true
+      tenants:
+        # Development team tenant
+        - id: dev-team
+          name: Development Team
+          description: Development team workspace
+          enabled: true
+          metadata:
+            department: engineering
+            cost-center: "1001"
+            
+          # Resource quotas for dev team
+          resourceQuota:
+            cpu: "2"
+            memory: "4Gi"
+            storage: "50Gi"
+            pods: 10
+            services: 5
+            secrets: 10
+            configMaps: 10
+            persistentVolumes: 3
+            
+          # Network isolation
+          networkIsolation:
+            enabled: true
+            vpcIsolation: false
+            subnetIsolation: true
+            securityGroups:
+              - sg-dev-team-n8n
+            networkPolicies:
+              - dev-team-network-policy
+            serviceMesh: false
+            
+          # Storage isolation
+          storageIsolation:
+            enabled: true
+            dedicatedBuckets: true
+            encryptionKeys:
+              - arn:aws:kms:us-west-2:123456789012:key/dev-team-key
+            accessPolicies:
+              - dev-team-s3-policy
+            dataClassification: internal
+            
+          # User management
+          userManagement:
+            enabled: true
+            authProvider: oidc
+            ssoEnabled: true
+            mfaRequired: false
+            sessionTimeout: "8h"
+            auditLogging: true
+            
+            # Password policy
+            passwordPolicy:
+              minLength: 12
+              requireUppercase: true
+              requireLowercase: true
+              requireNumbers: true
+              requireSymbols: true
+              maxAge: 90
+              historyCount: 5
+              
+            # Role-based access control
+            roleBasedAccess:
+              enabled: true
+              defaultRole: developer
+              roles:
+                - name: admin
+                  description: Full administrative access
+                  permissions:
+                    - resource: workflows
+                      actions: ["create", "read", "update", "delete", "execute"]
+                      scope: "*"
+                    - resource: credentials
+                      actions: ["create", "read", "update", "delete"]
+                      scope: "*"
+                    - resource: users
+                      actions: ["create", "read", "update", "delete"]
+                      scope: "*"
+                      
+                - name: developer
+                  description: Developer access to workflows and executions
+                  permissions:
+                    - resource: workflows
+                      actions: ["create", "read", "update", "delete", "execute"]
+                      scope: "own"
+                    - resource: credentials
+                      actions: ["create", "read", "update"]
+                      scope: "own"
+                    - resource: executions
+                      actions: ["read"]
+                      scope: "own"
+                      
+                - name: viewer
+                  description: Read-only access
+                  permissions:
+                    - resource: workflows
+                      actions: ["read"]
+                      scope: "shared"
+                    - resource: executions
+                      actions: ["read"]
+                      scope: "shared"
+                      
+        # Marketing team tenant
+        - id: marketing-team
+          name: Marketing Team
+          description: Marketing team workspace
+          enabled: true
+          metadata:
+            department: marketing
+            cost-center: "2001"
+            
+          # Resource quotas for marketing team
+          resourceQuota:
+            cpu: "1"
+            memory: "2Gi"
+            storage: "20Gi"
+            pods: 5
+            services: 3
+            secrets: 5
+            configMaps: 5
+            persistentVolumes: 2
+            
+          # Network isolation
+          networkIsolation:
+            enabled: true
+            vpcIsolation: false
+            subnetIsolation: true
+            securityGroups:
+              - sg-marketing-team-n8n
+            networkPolicies:
+              - marketing-team-network-policy
+            serviceMesh: false
+            
+          # Storage isolation
+          storageIsolation:
+            enabled: true
+            dedicatedBuckets: true
+            encryptionKeys:
+              - arn:aws:kms:us-west-2:123456789012:key/marketing-team-key
+            accessPolicies:
+              - marketing-team-s3-policy
+            dataClassification: confidential
+            
+          # User management
+          userManagement:
+            enabled: true
+            authProvider: oidc
+            ssoEnabled: true
+            mfaRequired: true
+            sessionTimeout: "4h"
+            auditLogging: true
+            
+            # Password policy
+            passwordPolicy:
+              minLength: 14
+              requireUppercase: true
+              requireLowercase: true
+              requireNumbers: true
+              requireSymbols: true
+              maxAge: 60
+              historyCount: 10
+              
+            # Role-based access control
+            roleBasedAccess:
+              enabled: true
+              defaultRole: marketer
+              roles:
+                - name: marketing-admin
+                  description: Marketing team administrator
+                  permissions:
+                    - resource: workflows
+                      actions: ["create", "read", "update", "delete", "execute"]
+                      scope: "*"
+                    - resource: credentials
+                      actions: ["create", "read", "update", "delete"]
+                      scope: "*"
+                    - resource: users
+                      actions: ["read", "update"]
+                      scope: "team"
+                      
+                - name: marketer
+                  description: Marketing team member
+                  permissions:
+                    - resource: workflows
+                      actions: ["create", "read", "update", "execute"]
+                      scope: "own"
+                    - resource: credentials
+                      actions: ["read", "update"]
+                      scope: "shared"
+                    - resource: executions
+                      actions: ["read"]
+                      scope: "own"
+                      
+        # Production tenant (restricted)
+        - id: production
+          name: Production Environment
+          description: Production workloads only
+          enabled: true
+          metadata:
+            environment: production
+            criticality: high
+            cost-center: "0001"
+            
+          # Higher resource quotas for production
+          resourceQuota:
+            cpu: "8"
+            memory: "16Gi"
+            storage: "200Gi"
+            pods: 20
+            services: 10
+            secrets: 20
+            configMaps: 20
+            persistentVolumes: 10
+            
+          # Strict network isolation
+          networkIsolation:
+            enabled: true
+            vpcIsolation: true
+            subnetIsolation: true
+            securityGroups:
+              - sg-production-n8n
+              - sg-production-database
+            networkPolicies:
+              - production-network-policy
+              - production-egress-policy
+            serviceMesh: true
+            
+          # Enhanced storage isolation
+          storageIsolation:
+            enabled: true
+            dedicatedBuckets: true
+            encryptionKeys:
+              - arn:aws:kms:us-west-2:123456789012:key/production-key
+            accessPolicies:
+              - production-s3-policy
+              - production-backup-policy
+            dataClassification: restricted
+            
+          # Strict user management
+          userManagement:
+            enabled: true
+            authProvider: oidc
+            ssoEnabled: true
+            mfaRequired: true
+            sessionTimeout: "2h"
+            auditLogging: true
+            
+            # Strict password policy
+            passwordPolicy:
+              minLength: 16
+              requireUppercase: true
+              requireLowercase: true
+              requireNumbers: true
+              requireSymbols: true
+              maxAge: 30
+              historyCount: 24
+              
+            # Minimal role-based access
+            roleBasedAccess:
+              enabled: true
+              defaultRole: operator
+              roles:
+                - name: production-admin
+                  description: Production administrator (limited access)
+                  permissions:
+                    - resource: workflows
+                      actions: ["read", "execute"]
+                      scope: "approved"
+                    - resource: executions
+                      actions: ["read"]
+                      scope: "*"
+                    - resource: monitoring
+                      actions: ["read"]
+                      scope: "*"
+                      
+                - name: operator
+                  description: Production operator
+                  permissions:
+                    - resource: workflows
+                      actions: ["read", "execute"]
+                      scope: "assigned"
+                    - resource: executions
+                      actions: ["read"]
+                      scope: "own"
+                      
+    # Single Sign-On configuration
+    sso:
+      enabled: true
+      provider: oidc
+      oidc:
+        issuerUrl: https://auth.company.com
+        clientId: n8n-enterprise
+        clientSecret:
+          name: n8n-oidc-secret
+          key: client-secret
+        scopes: ["openid", "profile", "email", "groups"]
+        usernameClaim: preferred_username
+        emailClaim: email
+        groupsClaim: groups
+        
+    # Audit logging configuration
+    auditLogging:
+      enabled: true
+      level: detailed
+      destinations:
+        - cloudwatch
+        - s3
+      retentionPeriod: "7y"
+      encryptionEnabled: true
+      
+    # Compliance configuration
+    compliance:
+      enabled: true
+      standards:
+        - SOC2
+        - GDPR
+        - HIPAA
+        
+      # Data retention policies
+      dataRetention:
+        enabled: true
+        defaultRetention: "3y"
+        policies:
+          - name: execution-logs
+            dataType: execution_logs
+            retention: "1y"
+            action: archive
+            enabled: true
+            
+          - name: audit-logs
+            dataType: audit_logs
+            retention: "7y"
+            action: retain
+            enabled: true
+            
+          - name: user-data
+            dataType: user_data
+            retention: "5y"
+            action: anonymize
+            enabled: true
+            
+      # Data classification
+      dataClassification:
+        enabled: true
+        defaultLevel: internal
+        levels:
+          - name: public
+            description: Public information
+            color: green
+            policies: []
+            
+          - name: internal
+            description: Internal company information
+            color: yellow
+            policies:
+              - internal-access-policy
+              
+          - name: confidential
+            description: Confidential business information
+            color: orange
+            policies:
+              - confidential-access-policy
+              - encryption-required
+              
+          - name: restricted
+            description: Highly sensitive information
+            color: red
+            policies:
+              - restricted-access-policy
+              - encryption-required
+              - audit-required
+              
+        autoTagging: true
+        
+      # Privacy controls
+      privacyControls:
+        enabled: true
+        piiDetection: true
+        dataMasking: true
+        consentManagement: true
+        rightToErasure: true
+        
+    # API Gateway configuration
+    apiGateway:
+      enabled: true
+      rateLimiting:
+        enabled: true
+        rules:
+          - path: "/api/*"
+            limit: "100/minute"
+            burst: 20
+          - path: "/webhook/*"
+            limit: "1000/minute"
+            burst: 200
+          - path: "/healthz"
+            limit: "1000/minute"
+            burst: 100
+            
+      # Authentication requirements
+      authentication:
+        enabled: true
+        exemptPaths:
+          - "/healthz"
+          - "/webhook/*"
+          
+      # Security headers
+      securityHeaders:
+        enabled: true
+        headers:
+          X-Frame-Options: DENY
+          X-Content-Type-Options: nosniff
+          X-XSS-Protection: "1; mode=block"
+          Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+          
+  # Monitoring configuration
+  monitoring:
+    enabled: true
+    prometheus:
+      enabled: true
+      serviceMonitor: true
+    grafana:
+      enabled: true
+      dashboards: true
+    alerting:
+      enabled: true
+      
+  # Backup configuration
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retention: "30d"
+    encryption: true

@@ -1,0 +1,524 @@
+name: Deploy Pipeline
+
+on:
+  workflow_run:
+    workflows: ["Release Pipeline"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      version:
+        description: 'Version to deploy (e.g., v1.0.0)'
+        required: true
+        type: string
+      force_deploy:
+        description: 'Force deployment (skip safety checks)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Determine deployment parameters
+  setup-deployment:
+    name: Setup Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.setup.outputs.environment }}
+      version: ${{ steps.setup.outputs.version }}
+      cluster-name: ${{ steps.setup.outputs.cluster-name }}
+      namespace: ${{ steps.setup.outputs.namespace }}
+      force-deploy: ${{ steps.setup.outputs.force-deploy }}
+    steps:
+      - name: Setup deployment parameters
+        id: setup
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            VERSION="${{ github.event.inputs.version }}"
+            FORCE_DEPLOY="${{ github.event.inputs.force_deploy }}"
+          else
+            # Auto-deploy from release
+            ENVIRONMENT="staging"
+            VERSION="${{ github.event.workflow_run.head_branch }}"
+            FORCE_DEPLOY="false"
+          fi
+          
+          # Set cluster and namespace based on environment
+          case "$ENVIRONMENT" in
+            "staging")
+              CLUSTER_NAME="n8n-staging-cluster"
+              NAMESPACE="n8n-staging"
+              ;;
+            "production")
+              CLUSTER_NAME="n8n-production-cluster"
+              NAMESPACE="n8n-production"
+              ;;
+          esac
+          
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "cluster-name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "namespace=$NAMESPACE" >> $GITHUB_OUTPUT
+          echo "force-deploy=$FORCE_DEPLOY" >> $GITHUB_OUTPUT
+          
+          echo "Deployment Configuration:"
+          echo "  Environment: $ENVIRONMENT"
+          echo "  Version: $VERSION"
+          echo "  Cluster: $CLUSTER_NAME"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Force Deploy: $FORCE_DEPLOY"
+
+  # Pre-deployment checks
+  pre-deployment-checks:
+    name: Pre-deployment Checks
+    runs-on: ubuntu-latest
+    needs: [setup-deployment]
+    environment: ${{ needs.setup-deployment.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+          
+      - name: Connect to EKS cluster
+        run: |
+          aws eks update-kubeconfig --region ${{ vars.AWS_REGION }} --name ${{ needs.setup-deployment.outputs.cluster-name }}
+          kubectl cluster-info
+          
+      - name: Check cluster health
+        run: |
+          echo "Checking cluster health..."
+          
+          # Check node status
+          kubectl get nodes
+          READY_NODES=$(kubectl get nodes --no-headers | grep -c " Ready ")
+          TOTAL_NODES=$(kubectl get nodes --no-headers | wc -l)
+          
+          if [ "$READY_NODES" -ne "$TOTAL_NODES" ]; then
+            echo "❌ Not all nodes are ready: $READY_NODES/$TOTAL_NODES"
+            if [[ "${{ needs.setup-deployment.outputs.force-deploy }}" != "true" ]]; then
+              exit 1
+            fi
+          fi
+          
+          # Check system pods
+          kubectl get pods -n kube-system
+          FAILED_PODS=$(kubectl get pods -n kube-system --no-headers | grep -v Running | grep -v Completed | wc -l)
+          
+          if [ "$FAILED_PODS" -gt 0 ]; then
+            echo "❌ Found $FAILED_PODS failed system pods"
+            kubectl get pods -n kube-system | grep -v Running | grep -v Completed
+            if [[ "${{ needs.setup-deployment.outputs.force-deploy }}" != "true" ]]; then
+              exit 1
+            fi
+          fi
+          
+          echo "✅ Cluster health check passed"
+          
+      - name: Check existing deployment
+        run: |
+          NAMESPACE="${{ needs.setup-deployment.outputs.namespace }}"
+          
+          # Check if namespace exists
+          if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+            echo "Namespace $NAMESPACE exists"
+            
+            # Check current operator version
+            if kubectl get deployment n8n-eks-operator-controller-manager -n n8n-system >/dev/null 2>&1; then
+              CURRENT_IMAGE=$(kubectl get deployment n8n-eks-operator-controller-manager -n n8n-system -o jsonpath='{.spec.template.spec.containers[0].image}')
+              echo "Current operator image: $CURRENT_IMAGE"
+              
+              # Check if there are running N8nInstances
+              RUNNING_INSTANCES=$(kubectl get n8ninstances -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
+              echo "Running N8nInstances: $RUNNING_INSTANCES"
+              
+              if [ "$RUNNING_INSTANCES" -gt 0 ] && [[ "${{ needs.setup-deployment.outputs.environment }}" == "production" ]]; then
+                echo "⚠️ Found $RUNNING_INSTANCES running instances in production"
+                echo "Deployment will use rolling update strategy"
+              fi
+            fi
+          else
+            echo "Namespace $NAMESPACE does not exist, will be created"
+          fi
+          
+      - name: Verify image exists
+        run: |
+          VERSION="${{ needs.setup-deployment.outputs.version }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+          
+          echo "Verifying image exists: $IMAGE"
+          
+          # Try to pull the image
+          if ! docker pull "$IMAGE"; then
+            echo "❌ Image $IMAGE not found"
+            exit 1
+          fi
+          
+          echo "✅ Image verification passed"
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [setup-deployment, pre-deployment-checks]
+    if: needs.setup-deployment.outputs.environment == 'staging'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+          
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+          
+      - name: Connect to EKS cluster
+        run: |
+          aws eks update-kubeconfig --region ${{ vars.AWS_REGION }} --name ${{ needs.setup-deployment.outputs.cluster-name }}
+          
+      - name: Create namespace
+        run: |
+          NAMESPACE="${{ needs.setup-deployment.outputs.namespace }}"
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl label namespace "$NAMESPACE" environment=staging --overwrite
+          
+      - name: Deploy operator
+        run: |
+          VERSION="${{ needs.setup-deployment.outputs.version }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+          NAMESPACE="${{ needs.setup-deployment.outputs.namespace }}"
+          
+          echo "Deploying operator version $VERSION to staging"
+          
+          # Deploy using Helm
+          helm upgrade --install n8n-eks-operator ./charts/n8n-eks-operator \
+            --namespace n8n-system \
+            --create-namespace \
+            --set image.repository="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --set image.tag="$VERSION" \
+            --set environment=staging \
+            --set resources.limits.cpu=500m \
+            --set resources.limits.memory=512Mi \
+            --set resources.requests.cpu=100m \
+            --set resources.requests.memory=128Mi \
+            --wait --timeout=300s
+            
+      - name: Verify deployment
+        run: |
+          echo "Verifying operator deployment..."
+          
+          # Wait for deployment to be ready
+          kubectl wait --for=condition=available --timeout=300s deployment/n8n-eks-operator-controller-manager -n n8n-system
+          
+          # Check pod status
+          kubectl get pods -n n8n-system -l app.kubernetes.io/name=n8n-eks-operator
+          
+          # Check operator logs
+          kubectl logs -n n8n-system -l app.kubernetes.io/name=n8n-eks-operator --tail=50
+          
+          echo "✅ Staging deployment completed successfully"
+          
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+          
+          # Create a test N8nInstance
+          cat <<EOF | kubectl apply -f -
+          apiVersion: n8n.io/v1alpha1
+          kind: N8nInstance
+          metadata:
+            name: staging-smoke-test
+            namespace: ${{ needs.setup-deployment.outputs.namespace }}
+          spec:
+            version: "1.0.0"
+            domain: "staging-smoke-test.example.com"
+            components:
+              main:
+                replicas: 1
+                resources:
+                  requests:
+                    cpu: "100m"
+                    memory: "128Mi"
+                  limits:
+                    cpu: "200m"
+                    memory: "256Mi"
+          EOF
+          
+          # Wait for instance to be ready
+          timeout 300s bash -c 'until kubectl get n8ninstance staging-smoke-test -n ${{ needs.setup-deployment.outputs.namespace }} -o jsonpath="{.status.phase}" | grep -q "Ready"; do sleep 10; done'
+          
+          # Cleanup test instance
+          kubectl delete n8ninstance staging-smoke-test -n ${{ needs.setup-deployment.outputs.namespace }}
+          
+          echo "✅ Smoke tests passed"
+
+  # Deploy to production (requires approval)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [setup-deployment, pre-deployment-checks]
+    if: needs.setup-deployment.outputs.environment == 'production'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+          
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+          
+      - name: Connect to EKS cluster
+        run: |
+          aws eks update-kubeconfig --region ${{ vars.AWS_REGION }} --name ${{ needs.setup-deployment.outputs.cluster-name }}
+          
+      - name: Backup current state
+        run: |
+          echo "Creating backup of current state..."
+          
+          # Backup operator deployment
+          kubectl get deployment n8n-eks-operator-controller-manager -n n8n-system -o yaml > operator-backup.yaml
+          
+          # Backup all N8nInstances
+          kubectl get n8ninstances --all-namespaces -o yaml > n8ninstances-backup.yaml
+          
+          # Store backups as artifacts
+          echo "Backups created successfully"
+          
+      - name: Deploy operator with rolling update
+        run: |
+          VERSION="${{ needs.setup-deployment.outputs.version }}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+          
+          echo "Deploying operator version $VERSION to production"
+          
+          # Deploy using Helm with production settings
+          helm upgrade --install n8n-eks-operator ./charts/n8n-eks-operator \
+            --namespace n8n-system \
+            --create-namespace \
+            --set image.repository="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --set image.tag="$VERSION" \
+            --set environment=production \
+            --set resources.limits.cpu=1000m \
+            --set resources.limits.memory=1Gi \
+            --set resources.requests.cpu=500m \
+            --set resources.requests.memory=512Mi \
+            --set replicaCount=2 \
+            --set podDisruptionBudget.enabled=true \
+            --set podDisruptionBudget.minAvailable=1 \
+            --wait --timeout=600s
+            
+      - name: Verify production deployment
+        run: |
+          echo "Verifying production deployment..."
+          
+          # Wait for deployment to be ready
+          kubectl wait --for=condition=available --timeout=600s deployment/n8n-eks-operator-controller-manager -n n8n-system
+          
+          # Check all pods are running
+          kubectl get pods -n n8n-system -l app.kubernetes.io/name=n8n-eks-operator
+          
+          # Verify all existing N8nInstances are still healthy
+          kubectl get n8ninstances --all-namespaces
+          
+          # Check for any failed reconciliations
+          FAILED_INSTANCES=$(kubectl get n8ninstances --all-namespaces -o json | jq -r '.items[] | select(.status.phase == "Failed") | "\(.metadata.namespace)/\(.metadata.name)"')
+          
+          if [ -n "$FAILED_INSTANCES" ]; then
+            echo "❌ Found failed instances after deployment:"
+            echo "$FAILED_INSTANCES"
+            exit 1
+          fi
+          
+          echo "✅ Production deployment verified successfully"
+          
+      - name: Upload backup artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: production-backup-${{ github.run_id }}
+          path: |
+            operator-backup.yaml
+            n8ninstances-backup.yaml
+          retention-days: 90
+
+  # Post-deployment monitoring
+  post-deployment-monitoring:
+    name: Post-deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [setup-deployment, deploy-staging, deploy-production]
+    if: always() && (needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    steps:
+      - name: Setup monitoring
+        run: |
+          echo "Setting up post-deployment monitoring..."
+          
+          ENVIRONMENT="${{ needs.setup-deployment.outputs.environment }}"
+          VERSION="${{ needs.setup-deployment.outputs.version }}"
+          
+          echo "Monitoring deployment:"
+          echo "  Environment: $ENVIRONMENT"
+          echo "  Version: $VERSION"
+          echo "  Timestamp: $(date)"
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+          
+      - name: Connect to EKS cluster
+        run: |
+          aws eks update-kubeconfig --region ${{ vars.AWS_REGION }} --name ${{ needs.setup-deployment.outputs.cluster-name }}
+          
+      - name: Monitor deployment health
+        run: |
+          echo "Monitoring deployment health for 5 minutes..."
+          
+          for i in {1..30}; do
+            echo "Health check $i/30..."
+            
+            # Check operator pods
+            OPERATOR_PODS=$(kubectl get pods -n n8n-system -l app.kubernetes.io/name=n8n-eks-operator --no-headers | grep Running | wc -l)
+            echo "Operator pods running: $OPERATOR_PODS"
+            
+            # Check N8nInstance status
+            TOTAL_INSTANCES=$(kubectl get n8ninstances --all-namespaces --no-headers | wc -l)
+            READY_INSTANCES=$(kubectl get n8ninstances --all-namespaces --no-headers | grep Ready | wc -l)
+            echo "N8nInstances ready: $READY_INSTANCES/$TOTAL_INSTANCES"
+            
+            # Check for errors in operator logs
+            ERROR_COUNT=$(kubectl logs -n n8n-system -l app.kubernetes.io/name=n8n-eks-operator --since=10s | grep -i error | wc -l)
+            if [ "$ERROR_COUNT" -gt 0 ]; then
+              echo "⚠️ Found $ERROR_COUNT errors in operator logs"
+              kubectl logs -n n8n-system -l app.kubernetes.io/name=n8n-eks-operator --since=10s | grep -i error
+            fi
+            
+            sleep 10
+          done
+          
+          echo "✅ Post-deployment monitoring completed"
+
+  # Rollback capability
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: failure() && (needs.deploy-staging.result == 'failure' || needs.deploy-production.result == 'failure')
+    needs: [setup-deployment, deploy-staging, deploy-production]
+    environment: ${{ needs.setup-deployment.outputs.environment }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+          
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+          
+      - name: Connect to EKS cluster
+        run: |
+          aws eks update-kubeconfig --region ${{ vars.AWS_REGION }} --name ${{ needs.setup-deployment.outputs.cluster-name }}
+          
+      - name: Rollback deployment
+        run: |
+          echo "Rolling back deployment..."
+          
+          # Rollback using Helm
+          helm rollback n8n-eks-operator -n n8n-system
+          
+          # Wait for rollback to complete
+          kubectl wait --for=condition=available --timeout=300s deployment/n8n-eks-operator-controller-manager -n n8n-system
+          
+          echo "✅ Rollback completed"
+
+  # Notification
+  notify-deployment:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [setup-deployment, deploy-staging, deploy-production, post-deployment-monitoring]
+    if: always()
+    steps:
+      - name: Determine deployment status
+        id: status
+        run: |
+          if [[ "${{ needs.deploy-staging.result }}" == "success" || "${{ needs.deploy-production.result }}" == "success" ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=Deployment completed successfully" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=Deployment failed" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ steps.status.outputs.status }}
+          channel: '#deployments'
+          text: |
+            ${{ steps.status.outputs.message }}
+            
+            🚀 Environment: ${{ needs.setup-deployment.outputs.environment }}
+            📦 Version: ${{ needs.setup-deployment.outputs.version }}
+            🔗 Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

@@ -1,0 +1,616 @@
+# Production n8n Instance Example
+# This example shows a production-ready configuration with high availability,
+# security, monitoring, and performance optimizations
+
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-production
+  namespace: n8n-production
+  labels:
+    environment: production
+    app: n8n
+    tier: critical
+  annotations:
+    n8n.io/backup-schedule: "0 2 * * *"  # Daily backup at 2 AM
+    n8n.io/monitoring-enabled: "true"
+spec:
+  # n8n version - use specific version for production
+  version: "1.0.0"
+  
+  # Production domain with SSL
+  domain: "workflows.company.com"
+  
+  # High-availability component configuration
+  components:
+    # Main component with auto-scaling
+    main:
+      replicas: 3
+      port: 5678
+      subdomain: "app"  # app.workflows.company.com
+      
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2000m"
+          memory: "4Gi"
+      
+      # Horizontal Pod Autoscaler
+      autoscaling:
+        enabled: true
+        minReplicas: 3
+        maxReplicas: 10
+        targetCPU: 70
+        targetMemory: 80
+      
+      # Pod Disruption Budget for high availability
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 2
+      
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+      
+      # Node affinity for spreading across AZs
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                  - main
+              topologyKey: topology.kubernetes.io/zone
+      
+      # Environment variables
+      env:
+        - name: N8N_LOG_LEVEL
+          value: "info"
+        - name: N8N_METRICS
+          value: "true"
+        - name: N8N_DIAGNOSTICS_ENABLED
+          value: "false"  # Disable telemetry in production
+        - name: N8N_VERSION_NOTIFICATIONS_ENABLED
+          value: "false"
+        - name: N8N_TEMPLATES_ENABLED
+          value: "false"
+        - name: N8N_HIRING_BANNER_ENABLED
+          value: "false"
+        - name: N8N_PERSONALIZATION_ENABLED
+          value: "false"
+    
+    # Webhook component with auto-scaling
+    webhook:
+      replicas: 2
+      port: 5679
+      subdomain: "webhooks"  # webhooks.workflows.company.com
+      
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "1000m"
+          memory: "1Gi"
+      
+      autoscaling:
+        enabled: true
+        minReplicas: 2
+        maxReplicas: 8
+        targetCPU: 75
+      
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+    
+    # Worker component with auto-scaling
+    worker:
+      replicas: 5
+      
+      resources:
+        requests:
+          cpu: "300m"
+          memory: "512Mi"
+        limits:
+          cpu: "1500m"
+          memory: "2Gi"
+      
+      autoscaling:
+        enabled: true
+        minReplicas: 5
+        maxReplicas: 20
+        targetCPU: 80
+        targetMemory: 85
+      
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 3
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+      
+      # Dedicated node pool for workers
+      nodeSelector:
+        node-type: "worker"
+      
+      # Tolerate worker node taints
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "worker"
+        effect: "NoSchedule"
+  
+  # Production database configuration
+  database:
+    type: "rds"
+    host: "n8n-prod.cluster-abc123.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_production"
+    credentialsSecret: "n8n-prod-db-credentials"
+    ssl: true
+    sslMode: "require"
+    
+    # Connection pooling for performance
+    connectionPooling:
+      enabled: true
+      maxConnections: 100
+      minConnections: 10
+      idleTimeout: "30m"
+      maxLifetime: "1h"
+    
+    # Read replicas for scaling reads
+    readReplicas:
+      enabled: true
+      hosts:
+        - "n8n-prod-ro-1.cluster-abc123.us-west-2.rds.amazonaws.com"
+        - "n8n-prod-ro-2.cluster-abc123.us-west-2.rds.amazonaws.com"
+  
+  # Production cache configuration
+  cache:
+    type: "elasticache"
+    host: "n8n-prod-redis.abc123.cache.amazonaws.com"
+    port: 6379
+    credentialsSecret: "n8n-prod-redis-credentials"
+    ssl: true
+    
+    # TTL configuration
+    ttl:
+      default: "1h"
+      sessions: "24h"
+      workflows: "30m"
+      executions: "7d"
+    
+    # Redis cluster configuration
+    cluster:
+      enabled: true
+      nodes:
+        - "n8n-prod-redis-001.abc123.cache.amazonaws.com:6379"
+        - "n8n-prod-redis-002.abc123.cache.amazonaws.com:6379"
+        - "n8n-prod-redis-003.abc123.cache.amazonaws.com:6379"
+  
+  # Production storage configuration
+  storage:
+    # S3 with encryption and versioning
+    s3:
+      bucket: "n8n-production-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+      encryption: "AES256"
+      versioning: true
+      lifecyclePolicy: "30d"  # Archive old versions after 30 days
+      
+      # Cross-region replication for disaster recovery
+      replication:
+        enabled: true
+        destinationBucket: "n8n-production-workflows-backup"
+        destinationRegion: "us-east-1"
+    
+    # CloudFront for global asset distribution
+    cloudfront:
+      enabled: true
+      domain: "cdn.workflows.company.com"
+      certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc123"
+      cachePolicies:
+        default: "CachingOptimized"
+        api: "CachingDisabled"
+      
+      # Custom cache behaviors
+      behaviors:
+        - pathPattern: "/assets/*"
+          cachePolicy: "CachingOptimized"
+          ttl: "1d"
+        - pathPattern: "/api/*"
+          cachePolicy: "CachingDisabled"
+    
+    # High-performance persistent storage
+    persistent:
+      type: "ebs-csi"
+      storageClass: "gp3"
+      size: "100Gi"
+      iops: 3000
+      throughput: 125
+      autoExpansion: true
+      
+      # Snapshot configuration
+      snapshotPolicy: "daily"
+      retentionDays: 30
+  
+  # Production networking configuration
+  networking:
+    # DNS management with Route53
+    dns:
+      provider: "route53"
+      zoneId: "Z123456789"
+      ttl: 300
+      
+      # Health checks
+      healthCheck:
+        enabled: true
+        path: "/healthz"
+        interval: 30
+        timeout: 5
+        failureThreshold: 3
+    
+    # SSL/TLS with AWS Certificate Manager
+    ssl:
+      provider: "acm"
+      certificateArn: "arn:aws:acm:us-west-2:123456789012:certificate/def456"
+      minTLSVersion: "1.2"
+      cipherSuites:
+        - "ECDHE-RSA-AES128-GCM-SHA256"
+        - "ECDHE-RSA-AES256-GCM-SHA384"
+    
+    # Istio service mesh integration
+    istio:
+      enabled: true
+      gateway: "n8n-gateway"
+      virtualService: true
+      destinationRule: true
+      
+      # mTLS configuration
+      mtls:
+        mode: "STRICT"
+      
+      # Traffic policies
+      trafficPolicy:
+        loadBalancer:
+          simple: "LEAST_CONN"
+        connectionPool:
+          tcp:
+            maxConnections: 100
+          http:
+            http1MaxPendingRequests: 50
+            maxRequestsPerConnection: 10
+        outlierDetection:
+          consecutiveErrors: 3
+          interval: "30s"
+          baseEjectionTime: "30s"
+  
+  # Comprehensive monitoring configuration
+  monitoring:
+    # Prometheus metrics
+    metrics:
+      enabled: true
+      port: 9090
+      path: "/metrics"
+      
+      prometheus:
+        enabled: true
+        serviceMonitor: true
+        interval: "30s"
+        scrapeTimeout: "10s"
+        
+        # Custom metrics
+        customMetrics:
+          - name: "n8n_workflow_executions_total"
+            help: "Total number of workflow executions"
+          - name: "n8n_workflow_execution_duration_seconds"
+            help: "Workflow execution duration"
+          - name: "n8n_active_workflows_total"
+            help: "Number of active workflows"
+      
+      # CloudWatch integration
+      cloudwatch:
+        enabled: true
+        namespace: "N8N/Production"
+        region: "us-west-2"
+        
+        # Custom CloudWatch metrics
+        customMetrics:
+          - metricName: "WorkflowExecutions"
+            unit: "Count"
+          - metricName: "ExecutionDuration"
+            unit: "Seconds"
+          - metricName: "ErrorRate"
+            unit: "Percent"
+    
+    # Structured logging
+    logging:
+      level: "info"
+      format: "json"
+      
+      # CloudWatch Logs integration
+      cloudwatch:
+        enabled: true
+        logGroup: "/aws/eks/n8n-production"
+        retention: 30  # days
+        
+        # Log streams
+        streams:
+          - name: "main"
+            component: "main"
+          - name: "webhook"
+            component: "webhook"
+          - name: "worker"
+            component: "worker"
+      
+      # Structured logging fields
+      fields:
+        - "timestamp"
+        - "level"
+        - "component"
+        - "workflowId"
+        - "executionId"
+        - "userId"
+        - "message"
+    
+    # Alerting configuration
+    alerts:
+      enabled: true
+      
+      # SNS integration
+      sns:
+        topicArn: "arn:aws:sns:us-west-2:123456789012:n8n-production-alerts"
+        
+      # PagerDuty integration
+      pagerduty:
+        enabled: true
+        serviceKey: "your-pagerduty-service-key"
+      
+      # Slack integration
+      slack:
+        enabled: true
+        webhookUrl: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+        channel: "#n8n-alerts"
+      
+      # Alert rules
+      rules:
+        - name: "HighErrorRate"
+          condition: "error_rate > 5%"
+          duration: "5m"
+          severity: "critical"
+        - name: "HighLatency"
+          condition: "response_time > 2s"
+          duration: "10m"
+          severity: "warning"
+        - name: "LowAvailability"
+          condition: "availability < 99%"
+          duration: "5m"
+          severity: "critical"
+  
+  # Production security configuration
+  security:
+    # Pod Security Standards
+    podSecurityStandard: "restricted"
+    
+    # Network policies for micro-segmentation
+    networkPolicies:
+      enabled: true
+      denyAll: true  # Default deny all traffic
+      
+      # Specific allow rules
+      allowRules:
+        - name: "allow-database"
+          description: "Allow access to RDS database"
+          ports:
+            - port: 5432
+              protocol: "TCP"
+          to:
+            - namespaceSelector:
+                matchLabels:
+                  name: "rds"
+        
+        - name: "allow-cache"
+          description: "Allow access to ElastiCache"
+          ports:
+            - port: 6379
+              protocol: "TCP"
+          to:
+            - namespaceSelector:
+                matchLabels:
+                  name: "elasticache"
+        
+        - name: "allow-s3"
+          description: "Allow HTTPS to S3"
+          ports:
+            - port: 443
+              protocol: "TCP"
+          to: []  # Allow to any (S3 endpoints)
+        
+        - name: "allow-internal"
+          description: "Allow internal component communication"
+          ports:
+            - port: 5678
+              protocol: "TCP"
+            - port: 5679
+              protocol: "TCP"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: "n8n"
+    
+    # RBAC with minimal permissions
+    rbac:
+      enabled: true
+      minimalPermissions: true
+      
+      # Custom roles
+      customRoles:
+        - name: "n8n-viewer"
+          rules:
+            - apiGroups: [""]
+              resources: ["pods", "services"]
+              verbs: ["get", "list", "watch"]
+        - name: "n8n-operator"
+          rules:
+            - apiGroups: ["n8n.io"]
+              resources: ["n8ninstances"]
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    
+    # Secrets management
+    secrets:
+      encryption: true
+      rotationEnabled: true
+      rotationInterval: "90d"
+      
+      # External secrets integration
+      externalSecrets:
+        enabled: true
+        provider: "aws-secrets-manager"
+        region: "us-west-2"
+        
+        # Secret mappings
+        mappings:
+          - secretName: "n8n-prod-db-credentials"
+            awsSecret: "n8n/production/database"
+          - secretName: "n8n-prod-redis-credentials"
+            awsSecret: "n8n/production/redis"
+    
+    # Image security
+    imageSecurity:
+      scanEnabled: true
+      allowedRegistries:
+        - "ghcr.io/n8n-io"
+        - "docker.io/n8nio"
+      
+      # Image signing verification
+      cosign:
+        enabled: true
+        publicKey: "your-cosign-public-key"
+  
+  # Backup and disaster recovery
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"  # Daily at 2 AM UTC
+    
+    # S3 backup configuration
+    s3:
+      bucket: "n8n-production-backups"
+      region: "us-west-2"
+      encryption: "AES256"
+      storageClass: "STANDARD_IA"
+    
+    # Retention policy
+    retention:
+      daily: 7
+      weekly: 4
+      monthly: 12
+      yearly: 5
+    
+    # Cross-region backup
+    crossRegion:
+      enabled: true
+      regions:
+        - "us-east-1"
+        - "eu-west-1"
+  
+  # Performance optimization
+  performance:
+    # Resource quotas
+    resourceQuotas:
+      enabled: true
+      limits:
+        cpu: "20"
+        memory: "40Gi"
+        persistentvolumeclaims: "10"
+    
+    # Horizontal Pod Autoscaler configuration
+    hpa:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 60
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+    
+    # Vertical Pod Autoscaler (optional)
+    vpa:
+      enabled: false  # Can conflict with HPA
+      updateMode: "Auto"
+      
+    # Pod priority classes
+    priorityClasses:
+      - name: "n8n-critical"
+        value: 1000
+        description: "Critical n8n components"
+      - name: "n8n-high"
+        value: 500
+        description: "High priority n8n components"
+
+---
+# Production database credentials secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-prod-db-credentials
+  namespace: n8n-production
+type: Opaque
+stringData:
+  username: "n8n_prod"
+  password: "super-secure-production-password"
+  host: "n8n-prod.cluster-abc123.us-west-2.rds.amazonaws.com"
+  port: "5432"
+  database: "n8n_production"
+
+---
+# Production Redis credentials secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-prod-redis-credentials
+  namespace: n8n-production
+type: Opaque
+stringData:
+  host: "n8n-prod-redis.abc123.cache.amazonaws.com"
+  port: "6379"
+  auth-token: "redis-auth-token"

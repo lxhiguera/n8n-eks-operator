@@ -1,0 +1,81 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin
+testbin/*
+Dockerfile.cross
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Kubernetes Generated files - skip generated files, except for vendored files
+
+!vendor/**/zz_generated.*
+
+# editor and IDE paraphernalia
+.idea
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build artifacts
+/bin/
+/dist/
+
+# Test coverage
+cover.out
+coverage.html
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# AWS credentials (should never be committed)
+.aws/
+aws-credentials.json
+
+# Kubernetes config (should never be committed)
+kubeconfig
+*.kubeconfig
+
+# Helm charts
+charts/*/charts/
+charts/*/requirements.lock
+
+# IDE specific files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+*.code-workspace
+.kiro
+.kiro/
+
+# Go modules
+go.work
+go.work.sum
+
+# Air (Go live reload)
+tmp/
+
+# Local development
+local/
+dev/
+*.local

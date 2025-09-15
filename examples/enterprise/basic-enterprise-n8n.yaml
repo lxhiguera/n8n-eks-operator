@@ -1,0 +1,143 @@
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-enterprise-basic
+  namespace: n8n-system
+spec:
+  # Base n8n configuration
+  image: n8nio/n8n:latest
+  replicas: 2
+  
+  # AWS Configuration
+  aws:
+    region: us-east-1
+    
+  # Database configuration
+  database:
+    type: postgres
+    postgres:
+      host: n8n-postgres.rds.amazonaws.com
+      port: 5432
+      database: n8n_enterprise
+      username: n8n_user
+      passwordSecret:
+        name: n8n-db-secret
+        key: password
+      ssl: true
+      
+  # Cache configuration
+  cache:
+    type: redis
+    redis:
+      host: n8n-redis.cache.amazonaws.com
+      port: 6379
+      database: 0
+      passwordSecret:
+        name: n8n-redis-secret
+        key: password
+      ssl: true
+      
+  # Storage configuration
+  storage:
+    type: s3
+    s3:
+      bucket: n8n-enterprise-basic-storage
+      region: us-east-1
+      
+  # Ingress configuration
+  ingress:
+    enabled: true
+    host: n8n.company.com
+    tls:
+      enabled: true
+      certificateArn: arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+      
+  # Enterprise features (basic configuration)
+  enterprise:
+    enabled: true
+    
+    # Single Sign-On
+    sso:
+      enabled: true
+      provider: oidc
+      oidc:
+        issuerUrl: https://login.company.com
+        clientId: n8n-app
+        clientSecret:
+          name: n8n-oidc-secret
+          key: client-secret
+        scopes: ["openid", "profile", "email"]
+        usernameClaim: preferred_username
+        emailClaim: email
+        
+    # Basic audit logging
+    auditLogging:
+      enabled: true
+      level: standard
+      destinations:
+        - cloudwatch
+      retentionPeriod: "1y"
+      encryptionEnabled: true
+      
+    # API Gateway with rate limiting
+    apiGateway:
+      enabled: true
+      rateLimiting:
+        enabled: true
+        rules:
+          - path: "/api/*"
+            limit: "60/minute"
+            burst: 10
+          - path: "/webhook/*"
+            limit: "500/minute"
+            burst: 100
+            
+      # Basic security headers
+      securityHeaders:
+        enabled: true
+        headers:
+          X-Frame-Options: DENY
+          X-Content-Type-Options: nosniff
+          X-XSS-Protection: "1; mode=block"
+          
+    # Basic compliance
+    compliance:
+      enabled: true
+      standards:
+        - SOC2
+        
+      # Simple data retention
+      dataRetention:
+        enabled: true
+        defaultRetention: "2y"
+        policies:
+          - name: execution-logs
+            dataType: execution_logs
+            retention: "6m"
+            action: delete
+            enabled: true
+            
+      # Basic privacy controls
+      privacyControls:
+        enabled: true
+        piiDetection: true
+        dataMasking: false
+        consentManagement: false
+        rightToErasure: true
+        
+  # Monitoring
+  monitoring:
+    enabled: true
+    prometheus:
+      enabled: true
+      serviceMonitor: true
+    grafana:
+      enabled: true
+      dashboards: true
+      
+  # Backup
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+    retention: "14d"
+    encryption: true

@@ -1,0 +1,373 @@
+# Default values for n8n-eks-operator
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Operator configuration
+operator:
+  # Number of operator replicas
+  replicaCount: 1
+  
+  # Operator image configuration
+  image:
+    repository: ghcr.io/n8n-io/n8n-eks-operator
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: ""
+  
+  # Image pull secrets for private registries
+  imagePullSecrets: []
+  
+  # Override the name of the operator
+  nameOverride: ""
+  fullnameOverride: ""
+  
+  # Service account configuration
+  serviceAccount:
+    # Specifies whether a service account should be created
+    create: true
+    # Annotations to add to the service account
+    annotations: {}
+    # The name of the service account to use.
+    # If not set and create is true, a name is generated using the fullname template
+    name: ""
+    # AWS IAM role ARN for service account (IRSA)
+    roleArn: ""
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+      - ALL
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Autoscaling configuration
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity rules
+  affinity: {}
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    # maxUnavailable: 1
+  
+  # Liveness probe configuration
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8081
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  # Readiness probe configuration
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8081
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  # Environment variables
+  env: []
+    # - name: LOG_LEVEL
+    #   value: "info"
+  
+  # Extra volumes
+  extraVolumes: []
+  
+  # Extra volume mounts
+  extraVolumeMounts: []
+
+# Webhook configuration
+webhook:
+  # Enable admission webhooks
+  enabled: true
+  
+  # Webhook service configuration
+  service:
+    type: ClusterIP
+    port: 9443
+  
+  # Certificate configuration
+  certificate:
+    # Create certificate using cert-manager
+    certManager:
+      enabled: false
+      issuer: ""
+      # issuerRef:
+      #   name: selfsigned-issuer
+      #   kind: ClusterIssuer
+    
+    # Use custom certificate
+    custom:
+      enabled: false
+      secretName: ""
+    
+    # Generate self-signed certificate (default)
+    selfSigned:
+      enabled: true
+
+# RBAC configuration
+rbac:
+  # Create RBAC resources
+  create: true
+  
+  # Additional rules for the operator
+  additionalRules: []
+    # - apiGroups: [""]
+    #   resources: ["configmaps"]
+    #   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+# Custom Resource Definitions
+crds:
+  # Install CRDs
+  install: true
+  
+  # Keep CRDs on uninstall
+  keep: true
+  
+  # Annotations for CRDs
+  annotations: {}
+
+# Monitoring configuration
+monitoring:
+  # Enable monitoring
+  enabled: false
+  
+  # ServiceMonitor for Prometheus
+  serviceMonitor:
+    enabled: false
+    # Additional labels for ServiceMonitor
+    additionalLabels: {}
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Metric relabelings
+    metricRelabelings: []
+    # Target labels
+    targetLabels: []
+  
+  # Grafana dashboard
+  grafanaDashboard:
+    enabled: false
+    # Dashboard labels
+    labels:
+      grafana_dashboard: "1"
+    # Dashboard annotations
+    annotations: {}
+
+# Logging configuration
+logging:
+  # Log level (debug, info, warn, error)
+  level: info
+  
+  # Log format (json, console)
+  format: json
+  
+  # Enable development mode
+  development: false
+
+# AWS configuration
+aws:
+  # AWS region
+  region: ""
+  
+  # Default tags for AWS resources
+  defaultTags: {}
+    # Environment: production
+    # Team: platform
+  
+  # IAM role for service account (IRSA)
+  serviceAccount:
+    roleArn: ""
+    
+  # EKS cluster configuration
+  cluster:
+    name: ""
+    region: ""
+
+# Network policies
+networkPolicies:
+  # Enable network policies
+  enabled: false
+  
+  # Ingress rules
+  ingress:
+    # Allow ingress from specific namespaces
+    fromNamespaces: []
+    # Allow ingress from specific pods
+    fromPods: []
+    # Allow ingress from specific IPs
+    fromCIDRs: []
+  
+  # Egress rules
+  egress:
+    # Allow egress to specific namespaces
+    toNamespaces: []
+    # Allow egress to specific pods
+    toPods: []
+    # Allow egress to specific IPs/ports
+    toCIDRs: []
+    # Allow DNS resolution
+    allowDNS: true
+    # Allow HTTPS to internet
+    allowHTTPS: true
+
+# Pod Security Standards
+podSecurityStandards:
+  # Enforce Pod Security Standards
+  enforce: "restricted"
+  # Audit Pod Security Standards
+  audit: "restricted"
+  # Warn about Pod Security Standards violations
+  warn: "restricted"
+
+# Default configuration for N8nInstance resources
+defaultN8nInstance:
+  # Default n8n version
+  version: "1.0.0"
+  
+  # Default component configuration
+  components:
+    main:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+    
+    webhook:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+    
+    worker:
+      replicas: 2
+      resources:
+        requests:
+          cpu: "150m"
+          memory: "192Mi"
+        limits:
+          cpu: "300m"
+          memory: "384Mi"
+  
+  # Default storage configuration
+  storage:
+    persistent:
+      storageClass: "gp3"
+      size: "10Gi"
+      autoExpansion: true
+  
+  # Default monitoring configuration
+  monitoring:
+    metrics:
+      enabled: true
+    logging:
+      level: "info"
+  
+  # Default security configuration
+  security:
+    podSecurityStandard: "restricted"
+    networkPolicies:
+      enabled: true
+
+# Global configuration
+global:
+  # Global image pull secrets
+  imagePullSecrets: []
+  
+  # Global labels to add to all resources
+  labels: {}
+  
+  # Global annotations to add to all resources
+  annotations: {}
+
+# Additional configuration
+config:
+  # Operator configuration
+  operator:
+    # Reconciliation interval
+    reconcileInterval: "30s"
+    
+    # Maximum concurrent reconciles
+    maxConcurrentReconciles: 10
+    
+    # Leader election configuration
+    leaderElection:
+      enabled: true
+      resourceName: "n8n-eks-operator-leader-election"
+      resourceNamespace: ""
+    
+    # Metrics configuration
+    metrics:
+      bindAddress: "0.0.0.0:8080"
+      
+    # Health probe configuration
+    health:
+      bindAddress: "0.0.0.0:8081"
+    
+    # Webhook configuration
+    webhook:
+      bindAddress: "0.0.0.0:9443"
+      certDir: "/tmp/k8s-webhook-server/serving-certs"
+
+# Test configuration (for chart testing)
+tests:
+  # Enable tests
+  enabled: true
+  
+  # Test image
+  image:
+    repository: busybox
+    tag: "1.35"
+    pullPolicy: IfNotPresent

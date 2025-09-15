@@ -1,0 +1,186 @@
+# Helm Chart Linting Configuration
+
+rules:
+  # Require all charts to have a description
+  description-required: error
+  
+  # Require all charts to have a version
+  version-required: error
+  
+  # Require all charts to have an appVersion
+  app-version-required: error
+  
+  # Require all charts to have maintainers
+  maintainers-required: warning
+  
+  # Require all charts to have keywords
+  keywords-required: warning
+  
+  # Require all charts to have a home URL
+  home-required: warning
+  
+  # Require all charts to have sources
+  sources-required: warning
+  
+  # Check for deprecated API versions
+  deprecated-api-versions: error
+  
+  # Check for required labels
+  required-labels:
+    - app.kubernetes.io/name
+    - app.kubernetes.io/instance
+    - app.kubernetes.io/version
+    - app.kubernetes.io/component
+    - app.kubernetes.io/part-of
+    - app.kubernetes.io/managed-by
+  
+  # Resource naming conventions
+  resource-naming:
+    # Require consistent naming
+    consistent-naming: error
+    
+    # Maximum name length
+    max-name-length: 63
+    
+    # Naming pattern (kebab-case)
+    naming-pattern: "^[a-z0-9-]+$"
+  
+  # Security checks
+  security:
+    # Disallow privileged containers
+    no-privileged: error
+    
+    # Require security contexts
+    security-context-required: warning
+    
+    # Disallow host network
+    no-host-network: error
+    
+    # Disallow host PID
+    no-host-pid: error
+    
+    # Disallow host IPC
+    no-host-ipc: error
+    
+    # Require non-root user
+    non-root-user: warning
+    
+    # Require read-only root filesystem
+    read-only-root-fs: warning
+    
+    # Disallow privilege escalation
+    no-privilege-escalation: error
+  
+  # Resource limits and requests
+  resources:
+    # Require resource limits
+    limits-required: warning
+    
+    # Require resource requests
+    requests-required: warning
+    
+    # CPU limits should be reasonable
+    cpu-limit-range:
+      min: "10m"
+      max: "4"
+    
+    # Memory limits should be reasonable
+    memory-limit-range:
+      min: "64Mi"
+      max: "8Gi"
+  
+  # Image configuration
+  images:
+    # Require image tags (no latest)
+    no-latest-tag: error
+    
+    # Require specific registries
+    allowed-registries:
+      - "ghcr.io"
+      - "docker.io"
+      - "quay.io"
+      - "registry.k8s.io"
+    
+    # Require image pull policy
+    pull-policy-required: warning
+  
+  # Service configuration
+  services:
+    # Require service type to be specified
+    type-required: warning
+    
+    # Disallow NodePort in production
+    no-nodeport: warning
+  
+  # Ingress configuration
+  ingress:
+    # Require TLS configuration
+    tls-required: warning
+    
+    # Require annotations for ingress class
+    ingress-class-required: warning
+  
+  # ConfigMap and Secret validation
+  config:
+    # Require data validation
+    data-validation: error
+    
+    # Check for sensitive data in ConfigMaps
+    no-sensitive-data: error
+  
+  # RBAC validation
+  rbac:
+    # Require minimal permissions
+    minimal-permissions: error
+    
+    # Disallow cluster-admin
+    no-cluster-admin: error
+    
+    # Require specific service account
+    service-account-required: warning
+  
+  # Networking
+  networking:
+    # Require network policies
+    network-policy-required: warning
+    
+    # Validate port configurations
+    port-validation: error
+  
+  # Monitoring and observability
+  monitoring:
+    # Require health checks
+    health-checks-required: warning
+    
+    # Require monitoring annotations
+    monitoring-annotations: warning
+    
+    # Require service monitor
+    service-monitor-required: warning
+
+# Severity levels: error, warning, info
+# error: Will fail the linting process
+# warning: Will show warnings but not fail
+# info: Informational messages only
+
+# Custom rules can be added here
+custom-rules: []
+
+# Files to exclude from linting
+exclude-files:
+  - "*/templates/tests/*"
+  - "*/templates/NOTES.txt"
+
+# Additional validation
+validation:
+  # Validate against Kubernetes schemas
+  kubernetes-schema: true
+  
+  # Validate Helm template rendering
+  template-rendering: true
+  
+  # Check for unused values
+  unused-values: warning
+  
+  # Check for missing required values
+  required-values: error

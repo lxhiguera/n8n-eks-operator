@@ -1,0 +1,589 @@
+# Multi-Tenant n8n Setup Example
+# This example shows how to deploy multiple n8n instances for different tenants
+# with proper isolation and resource management
+
+---
+# Tenant A - Development Team
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-tenant-a
+  namespace: tenant-a
+  labels:
+    tenant: "team-a"
+    environment: "production"
+    cost-center: "engineering"
+spec:
+  version: "1.0.0"
+  domain: "workflows-team-a.company.com"
+  
+  components:
+    main:
+      replicas: 2
+      resources:
+        requests:
+          cpu: "300m"
+          memory: "512Mi"
+        limits:
+          cpu: "1000m"
+          memory: "2Gi"
+      
+      # Tenant-specific environment variables
+      env:
+        - name: N8N_USER_MANAGEMENT_DISABLED
+          value: "false"
+        - name: N8N_PUBLIC_API_DISABLED
+          value: "false"
+        - name: N8N_TEMPLATES_ENABLED
+          value: "true"
+    
+    webhook:
+      replicas: 1
+      subdomain: "webhooks-team-a"
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+    
+    worker:
+      replicas: 3
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "800m"
+          memory: "1Gi"
+  
+  # Dedicated database for tenant A
+  database:
+    type: "rds"
+    host: "n8n-tenant-a-db.cluster-xxx.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_tenant_a"
+    credentialsSecret: "n8n-tenant-a-db-credentials"
+    ssl: true
+  
+  # Shared cache with tenant prefix
+  cache:
+    type: "elasticache"
+    host: "n8n-shared-redis.xxx.cache.amazonaws.com"
+    port: 6379
+    credentialsSecret: "n8n-shared-redis-credentials"
+    keyPrefix: "tenant-a:"
+  
+  # Tenant-specific S3 bucket
+  storage:
+    s3:
+      bucket: "n8n-tenant-a-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+    persistent:
+      storageClass: "gp3"
+      size: "20Gi"
+  
+  # Resource quotas for tenant A
+  resourceQuota:
+    enabled: true
+    limits:
+      cpu: "5"
+      memory: "10Gi"
+      persistentvolumeclaims: "5"
+  
+  monitoring:
+    metrics:
+      enabled: true
+      labels:
+        tenant: "team-a"
+    logging:
+      level: "info"
+      fields:
+        tenant: "team-a"
+  
+  security:
+    podSecurityStandard: "restricted"
+    networkPolicies:
+      enabled: true
+      # Allow communication only within tenant namespace
+      allowRules:
+        - name: "allow-same-tenant"
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  tenant: "team-a"
+
+---
+# Tenant B - Marketing Team
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-tenant-b
+  namespace: tenant-b
+  labels:
+    tenant: "team-b"
+    environment: "production"
+    cost-center: "marketing"
+spec:
+  version: "1.0.0"
+  domain: "workflows-team-b.company.com"
+  
+  components:
+    main:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "500m"
+          memory: "1Gi"
+      
+      # Marketing team specific configuration
+      env:
+        - name: N8N_USER_MANAGEMENT_DISABLED
+          value: "true"  # Single user for marketing
+        - name: N8N_PUBLIC_API_DISABLED
+          value: "true"  # Disable API for security
+        - name: N8N_TEMPLATES_ENABLED
+          value: "true"
+    
+    webhook:
+      replicas: 1
+      subdomain: "webhooks-team-b"
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+    
+    worker:
+      replicas: 2
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "400m"
+          memory: "512Mi"
+  
+  # Dedicated database for tenant B
+  database:
+    type: "rds"
+    host: "n8n-tenant-b-db.cluster-yyy.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_tenant_b"
+    credentialsSecret: "n8n-tenant-b-db-credentials"
+    ssl: true
+  
+  # Shared cache with tenant prefix
+  cache:
+    type: "elasticache"
+    host: "n8n-shared-redis.xxx.cache.amazonaws.com"
+    port: 6379
+    credentialsSecret: "n8n-shared-redis-credentials"
+    keyPrefix: "tenant-b:"
+  
+  # Tenant-specific S3 bucket
+  storage:
+    s3:
+      bucket: "n8n-tenant-b-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+    persistent:
+      storageClass: "gp3"
+      size: "10Gi"
+  
+  # Smaller resource quotas for marketing team
+  resourceQuota:
+    enabled: true
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+      persistentvolumeclaims: "3"
+  
+  monitoring:
+    metrics:
+      enabled: true
+      labels:
+        tenant: "team-b"
+    logging:
+      level: "info"
+      fields:
+        tenant: "team-b"
+  
+  security:
+    podSecurityStandard: "restricted"
+    networkPolicies:
+      enabled: true
+      allowRules:
+        - name: "allow-same-tenant"
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  tenant: "team-b"
+
+---
+# Tenant C - External Partners (Restricted)
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-tenant-c
+  namespace: tenant-c
+  labels:
+    tenant: "partners"
+    environment: "production"
+    cost-center: "partnerships"
+    security-level: "restricted"
+spec:
+  version: "1.0.0"
+  domain: "workflows-partners.company.com"
+  
+  components:
+    main:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "300m"
+          memory: "512Mi"
+      
+      # Restricted configuration for external partners
+      env:
+        - name: N8N_USER_MANAGEMENT_DISABLED
+          value: "true"
+        - name: N8N_PUBLIC_API_DISABLED
+          value: "true"
+        - name: N8N_TEMPLATES_ENABLED
+          value: "false"  # Disable templates for security
+        - name: N8N_DIAGNOSTICS_ENABLED
+          value: "false"
+        - name: N8N_VERSION_NOTIFICATIONS_ENABLED
+          value: "false"
+      
+      # Additional security restrictions
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+    
+    webhook:
+      replicas: 1
+      subdomain: "webhooks-partners"
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+    
+    worker:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+  
+  # Isolated database for partners
+  database:
+    type: "rds"
+    host: "n8n-partners-db.cluster-zzz.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_partners"
+    credentialsSecret: "n8n-partners-db-credentials"
+    ssl: true
+    sslMode: "require"
+  
+  # Separate cache instance for partners
+  cache:
+    type: "elasticache"
+    host: "n8n-partners-redis.zzz.cache.amazonaws.com"
+    port: 6379
+    credentialsSecret: "n8n-partners-redis-credentials"
+    ssl: true
+  
+  # Restricted S3 access
+  storage:
+    s3:
+      bucket: "n8n-partners-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+      # Additional S3 security
+      encryption: "AES256"
+      versioning: false  # Disable versioning for partners
+    persistent:
+      storageClass: "gp3"
+      size: "5Gi"
+  
+  # Strict resource quotas for partners
+  resourceQuota:
+    enabled: true
+    limits:
+      cpu: "1"
+      memory: "2Gi"
+      persistentvolumeclaims: "2"
+  
+  monitoring:
+    metrics:
+      enabled: true
+      labels:
+        tenant: "partners"
+        security-level: "restricted"
+    logging:
+      level: "warn"  # Reduced logging for partners
+      fields:
+        tenant: "partners"
+  
+  security:
+    podSecurityStandard: "restricted"
+    networkPolicies:
+      enabled: true
+      denyAll: true  # Default deny all for partners
+      allowRules:
+        - name: "allow-database-only"
+          ports:
+            - port: 5432
+              protocol: "TCP"
+          to:
+            - namespaceSelector:
+                matchLabels:
+                  name: "database"
+        - name: "allow-cache-only"
+          ports:
+            - port: 6379
+              protocol: "TCP"
+          to:
+            - namespaceSelector:
+                matchLabels:
+                  name: "cache"
+        - name: "allow-s3-https"
+          ports:
+            - port: 443
+              protocol: "TCP"
+          to: []  # S3 endpoints
+    
+    # Additional RBAC restrictions for partners
+    rbac:
+      enabled: true
+      customRoles:
+        - name: "partner-viewer"
+          rules:
+            - apiGroups: [""]
+              resources: ["pods"]
+              verbs: ["get", "list"]
+              resourceNames: []  # Restrict to specific resources
+
+---
+# Namespace configurations for tenants
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    tenant: "team-a"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-b
+  labels:
+    tenant: "team-b"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-c
+  labels:
+    tenant: "partners"
+    security-level: "restricted"
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# Resource quotas for each tenant
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-a-quota
+  namespace: tenant-a
+spec:
+  hard:
+    requests.cpu: "5"
+    requests.memory: 10Gi
+    limits.cpu: "10"
+    limits.memory: 20Gi
+    persistentvolumeclaims: "5"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-b-quota
+  namespace: tenant-b
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    persistentvolumeclaims: "3"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-c-quota
+  namespace: tenant-c
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "2"
+    limits.memory: 4Gi
+    persistentvolumeclaims: "2"
+    services: "3"
+    secrets: "5"
+    configmaps: "5"
+
+---
+# Network policies for tenant isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: tenant-a
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: "team-a"
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tenant: "team-a"
+  - to: []  # Allow egress to external services
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: tenant-b
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: "team-b"
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tenant: "team-b"
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: partner-strict-isolation
+  namespace: tenant-c
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tenant: "partners"
+  egress:
+  # Very restrictive egress for partners
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443  # HTTPS only
+    - protocol: TCP
+      port: 5432  # Database
+    - protocol: TCP
+      port: 6379  # Redis

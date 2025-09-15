@@ -1,0 +1,416 @@
+name: Development
+
+on:
+  push:
+    branches: [ develop, feature/* ]
+  pull_request:
+    branches: [ develop ]
+  schedule:
+    # Run nightly builds at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  GO_VERSION: '1.21'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: n8n-io/n8n-eks-operator
+
+jobs:
+  # Quick validation for fast feedback
+  quick-check:
+    name: Quick Check
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Run go mod tidy
+      run: |
+        go mod tidy
+        git diff --exit-code go.mod go.sum
+
+    - name: Run go fmt
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "The following files need formatting:"
+          gofmt -s -l .
+          exit 1
+        fi
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Basic build test
+      run: go build -v ./...
+
+  # Comprehensive testing
+  test-matrix:
+    name: Test Matrix
+    runs-on: ubuntu-latest
+    needs: [quick-check]
+    strategy:
+      matrix:
+        go-version: ['1.20', '1.21']
+        test-type: ['unit', 'integration']
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Run ${{ matrix.test-type }} tests
+      run: |
+        case "${{ matrix.test-type }}" in
+          "unit")
+            go test -v -race -coverprofile=coverage-${{ matrix.go-version }}.out ./...
+            ;;
+          "integration")
+            cd test/integration
+            make test
+            ;;
+        esac
+
+    - name: Upload coverage
+      if: matrix.test-type == 'unit'
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-go${{ matrix.go-version }}
+        path: coverage-${{ matrix.go-version }}.out
+
+  # Development image build
+  build-dev:
+    name: Build Development Image
+    runs-on: ubuntu-latest
+    needs: [quick-check]
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix=dev-
+          type=raw,value=dev-latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=dev-${{ github.sha }}
+          COMMIT=${{ github.sha }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+  # Lint and code quality
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=10m --config=.golangci.yml
+
+    - name: Run gosec security scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out gosec-results.sarif ./...'
+
+    - name: Upload gosec results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: gosec-results.sarif
+
+  # Helm chart validation
+  helm-validation:
+    name: Helm Chart Validation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.13.0'
+
+    - name: Set up chart-testing
+      uses: helm/chart-testing-action@v2.6.1
+
+    - name: Run chart-testing (lint)
+      run: ct lint --config .github/ct.yaml
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1.8.0
+      if: github.event_name == 'pull_request'
+
+    - name: Run chart-testing (install)
+      if: github.event_name == 'pull_request'
+      run: ct install --config .github/ct.yaml
+
+  # Development E2E tests
+  e2e-dev:
+    name: E2E Development Tests
+    runs-on: ubuntu-latest
+    needs: [build-dev]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1.8.0
+      with:
+        cluster_name: n8n-dev-e2e
+        kubectl_version: v1.28.0
+
+    - name: Load development image
+      if: github.event_name != 'pull_request'
+      run: |
+        IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}"
+        docker pull $IMAGE_TAG
+        kind load docker-image $IMAGE_TAG --name n8n-dev-e2e
+
+    - name: Deploy operator
+      run: |
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          make docker-build IMG=n8n-eks-operator:dev
+          kind load docker-image n8n-eks-operator:dev --name n8n-dev-e2e
+          make deploy IMG=n8n-eks-operator:dev
+        else
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}"
+          make deploy IMG=$IMAGE_TAG
+        fi
+
+    - name: Wait for operator
+      run: |
+        kubectl wait --for=condition=available --timeout=300s \
+          deployment/n8n-eks-operator-controller-manager -n n8n-system
+
+    - name: Run E2E tests
+      working-directory: test/e2e
+      env:
+        RUN_E2E_TESTS: true
+        USE_REAL_CLUSTER: true
+      run: make test
+
+    - name: Upload E2E results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-dev-results
+        path: test/e2e/results/
+
+  # Performance benchmarks
+  performance-benchmarks:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'performance')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Run performance tests
+      working-directory: test/performance
+      run: make benchmark
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-benchmarks
+        path: test/performance/results/
+
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'test/performance/results/benchmark-summary.md';
+          
+          if (fs.existsSync(path)) {
+            const results = fs.readFileSync(path, 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Performance Benchmark Results\n\n${results}`
+            });
+          }
+
+  # Security scanning
+  security-dev:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Run security tests
+      working-directory: test/security
+      run: make test
+
+  # Dependency updates check
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Check for outdated dependencies
+      run: |
+        go list -u -m all > dependencies.txt
+        
+        # Check for security vulnerabilities
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./... > vulnerabilities.txt || true
+
+    - name: Upload dependency report
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-report
+        path: |
+          dependencies.txt
+          vulnerabilities.txt
+
+  # Documentation validation
+  docs-validation:
+    name: Documentation Validation
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Validate markdown links
+      uses: gaurav-nelson/github-action-markdown-link-check@v1
+      with:
+        use-quiet-mode: 'yes'
+        use-verbose-mode: 'yes'
+        config-file: '.github/markdown-link-check-config.json'
+
+    - name: Check documentation completeness
+      run: |
+        # Check if all examples have corresponding documentation
+        find examples/ -name "*.yaml" | while read -r file; do
+          basename=$(basename "$file" .yaml)
+          if ! grep -r "$basename" docs/ >/dev/null 2>&1; then
+            echo "Warning: Example $file may not be documented"
+          fi
+        done
+
+  # Cleanup development artifacts
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [test-matrix, build-dev, e2e-dev]
+    if: always() && github.event_name != 'pull_request'
+    steps:
+    - name: Delete old development images
+      run: |
+        # This would clean up old development images from the registry
+        echo "Cleaning up old development artifacts..."
+        # Implementation would depend on your registry cleanup policies
+
+  # Notify development team
+  notify-dev:
+    name: Notify Development Team
+    runs-on: ubuntu-latest
+    needs: [test-matrix, build-dev, code-quality, helm-validation]
+    if: failure() && github.ref == 'refs/heads/develop'
+    steps:
+    - name: Notify Slack on failure
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        channel: '#n8n-dev'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          🚨 Development build failed on develop branch!
+          
+          Please check the failing jobs and fix the issues.

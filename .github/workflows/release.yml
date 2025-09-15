@@ -1,0 +1,472 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  GO_VERSION: '1.19'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Validate release
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+          else
+            VERSION="${{ github.ref_name }}"
+            # Check if it's a pre-release (contains alpha, beta, rc)
+            if [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
+              IS_PRERELEASE="true"
+            else
+              IS_PRERELEASE="false"
+            fi
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is-prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+          
+          echo "Release version: $VERSION"
+          echo "Is pre-release: $IS_PRERELEASE"
+          
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            echo "Invalid version format: $VERSION"
+            echo "Expected format: vX.Y.Z or vX.Y.Z-suffix"
+            exit 1
+          fi
+          
+      - name: Check if tag exists
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if git tag -l | grep -q "^$VERSION$"; then
+            echo "Tag $VERSION already exists"
+            exit 1
+          fi
+
+  # Run full test suite
+  full-test-suite:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    needs: [validate-release]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Install dependencies
+        run: go mod download
+        
+      - name: Run linting
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=10m
+          
+      - name: Run unit tests
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          
+      - name: Install security tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          
+      - name: Run security tests
+        working-directory: test/security
+        run: |
+          make test-ci
+          
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-test-results
+          path: |
+            coverage.out
+            test/security/security-results.json
+          retention-days: 30
+
+  # Build multi-arch images
+  build-release-images:
+    name: Build Release Images
+    runs-on: ubuntu-latest
+    needs: [validate-release, full-test-suite]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.validate-release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.validate-release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.validate-release.outputs.version }},enable={{is_default_branch}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.validate-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.head_commit.timestamp }}
+            
+      - name: Run comprehensive security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate-release.outputs.version }}
+          format: 'json'
+          output: 'trivy-results.json'
+          
+      - name: Check for critical vulnerabilities
+        run: |
+          CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-results.json)
+          HIGH_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-results.json)
+          
+          echo "Critical vulnerabilities: $CRITICAL_COUNT"
+          echo "High vulnerabilities: $HIGH_COUNT"
+          
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "❌ Critical vulnerabilities found in release image"
+            jq '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")' trivy-results.json
+            exit 1
+          fi
+          
+          if [ "$HIGH_COUNT" -gt 5 ]; then
+            echo "❌ Too many high severity vulnerabilities found: $HIGH_COUNT"
+            exit 1
+          fi
+          
+          echo "✅ Security scan passed"
+          
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-security-scan
+          path: trivy-results.json
+          retention-days: 90
+
+  # Generate release artifacts
+  generate-artifacts:
+    name: Generate Release Artifacts
+    runs-on: ubuntu-latest
+    needs: [validate-release]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Build binaries
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          DATE: ${{ github.event.head_commit.timestamp }}
+        run: |
+          mkdir -p dist
+          
+          # Build for multiple platforms
+          PLATFORMS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+          
+          for platform in $PLATFORMS; do
+            GOOS=${platform%/*}
+            GOARCH=${platform#*/}
+            
+            echo "Building for $GOOS/$GOARCH..."
+            
+            BINARY_NAME="n8n-eks-operator"
+            if [ "$GOOS" = "windows" ]; then
+              BINARY_NAME="${BINARY_NAME}.exe"
+            fi
+            
+            CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build \
+              -ldflags="-X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
+              -o "dist/${BINARY_NAME}-${GOOS}-${GOARCH}" \
+              ./cmd/main.go
+              
+            # Create archive
+            if [ "$GOOS" = "windows" ]; then
+              zip -j "dist/n8n-eks-operator-${VERSION}-${GOOS}-${GOARCH}.zip" \
+                "dist/${BINARY_NAME}-${GOOS}-${GOARCH}"
+            else
+              tar -czf "dist/n8n-eks-operator-${VERSION}-${GOOS}-${GOARCH}.tar.gz" \
+                -C dist "${BINARY_NAME}-${GOOS}-${GOARCH}"
+            fi
+          done
+          
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+          
+      - name: Generate Helm chart
+        run: |
+          # Update chart version
+          VERSION="${{ needs.validate-release.outputs.version }}"
+          sed -i "s/version: .*/version: ${VERSION#v}/" charts/n8n-eks-operator/Chart.yaml
+          sed -i "s/appVersion: .*/appVersion: ${VERSION}/" charts/n8n-eks-operator/Chart.yaml
+          
+          # Package Helm chart
+          helm package charts/n8n-eks-operator -d dist/
+          
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/*.tgz
+          retention-days: 90
+
+  # E2E tests with release image
+  e2e-release-tests:
+    name: E2E Tests (Release)
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-release-images]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Setup Kind
+        uses: helm/kind-action@v1.8.0
+        with:
+          version: v0.20.0
+          kubectl_version: v1.28.0
+          cluster_name: n8n-release-e2e
+          
+      - name: Load release image
+        run: |
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate-release.outputs.version }}"
+          docker pull $IMAGE_TAG
+          kind load docker-image $IMAGE_TAG --name n8n-release-e2e
+          
+      - name: Deploy operator with release image
+        run: |
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate-release.outputs.version }}"
+          make deploy IMG=$IMAGE_TAG
+          kubectl wait --for=condition=available --timeout=300s deployment/n8n-eks-operator-controller-manager -n n8n-system
+          
+      - name: Run E2E tests
+        working-directory: test/e2e
+        env:
+          RUN_E2E_TESTS: true
+          USE_REAL_CLUSTER: true
+          OPERATOR_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate-release.outputs.version }}
+        run: |
+          make test
+          
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: release-e2e-results
+          path: test/e2e/e2e-results.json
+          retention-days: 30
+
+  # Create GitHub release
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-release-images, generate-artifacts, e2e-release-tests]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Download release artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-artifacts
+          path: dist/
+          
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+          
+          # Get previous tag
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "$VERSION" | head -n1)
+          
+          echo "# Release $VERSION" > release-notes.md
+          echo "" >> release-notes.md
+          
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "## Changes since $PREVIOUS_TAG" >> release-notes.md
+            echo "" >> release-notes.md
+            
+            # Generate changelog
+            git log --pretty=format:"- %s (%h)" "$PREVIOUS_TAG..HEAD" >> release-notes.md
+          else
+            echo "## Initial Release" >> release-notes.md
+            echo "" >> release-notes.md
+            echo "This is the initial release of the n8n EKS Operator." >> release-notes.md
+          fi
+          
+          echo "" >> release-notes.md
+          echo "## Docker Images" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION\`" >> release-notes.md
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "## Installation" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "\`\`\`bash" >> release-notes.md
+          echo "# Install with Helm" >> release-notes.md
+          echo "helm install n8n-operator ./charts/n8n-eks-operator" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "# Or install with kubectl" >> release-notes.md
+          echo "kubectl apply -f https://github.com/${{ github.repository }}/releases/download/$VERSION/install.yaml" >> release-notes.md
+          echo "\`\`\`" >> release-notes.md
+          
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.validate-release.outputs.version }}
+          name: Release ${{ needs.validate-release.outputs.version }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.validate-release.outputs.is-prerelease }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/*.tgz
+          generate_release_notes: false
+          
+      - name: Update latest release
+        if: needs.validate-release.outputs.is-prerelease == 'false'
+        run: |
+          echo "Updating latest release pointer"
+          # This would update documentation, Helm repository, etc.
+
+  # Publish Helm chart
+  publish-helm-chart:
+    name: Publish Helm Chart
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: needs.validate-release.outputs.is-prerelease == 'false'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.12.0'
+          
+      - name: Download release artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release-artifacts
+          path: dist/
+          
+      - name: Publish to Helm repository
+        env:
+          HELM_REPO_TOKEN: ${{ secrets.HELM_REPO_TOKEN }}
+        run: |
+          # This would publish to your Helm repository
+          echo "Publishing Helm chart to repository..."
+          # helm repo add n8n-operator https://charts.n8n.io
+          # helm repo update
+          # helm push dist/n8n-eks-operator-*.tgz n8n-operator
+
+  # Notify stakeholders
+  notify:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: always()
+    steps:
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          channel: '#releases'
+          text: |
+            Release ${{ needs.validate-release.outputs.version }} has been ${{ job.status }}!
+            
+            🚀 Release: ${{ needs.validate-release.outputs.version }}
+            📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate-release.outputs.version }}
+            🔗 Release Notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.validate-release.outputs.version }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          
+      - name: Update documentation
+        if: needs.validate-release.outputs.is-prerelease == 'false'
+        run: |
+          echo "Updating documentation for release ${{ needs.validate-release.outputs.version }}"
+          # This would trigger documentation updates

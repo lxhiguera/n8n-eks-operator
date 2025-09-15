@@ -1,0 +1,278 @@
+# golangci-lint configuration for n8n EKS Operator
+
+run:
+  timeout: 10m
+  issues-exit-code: 1
+  tests: true
+  skip-dirs:
+    - vendor
+    - .git
+    - bin
+    - dist
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*_generated\\.go$"
+    - "zz_generated\\..*\\.go$"
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+linters-settings:
+  # Cyclomatic complexity
+  cyclop:
+    max-complexity: 15
+    package-average: 10.0
+    skip-tests: true
+
+  # Duplicate code detection
+  dupl:
+    threshold: 100
+
+  # Error handling
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (*github.com/go-logr/logr.Logger).Error
+      - (*k8s.io/client-go/kubernetes/typed/core/v1.EventInterface).Create
+
+  # Function length
+  funlen:
+    lines: 100
+    statements: 50
+
+  # Cognitive complexity
+  gocognit:
+    min-complexity: 20
+
+  # Cyclomatic complexity (alternative)
+  gocyclo:
+    min-complexity: 15
+
+  # Dot imports
+  goimports:
+    local-prefixes: github.com/n8n-io/n8n-eks-operator
+
+  # Line length
+  lll:
+    line-length: 120
+    tab-width: 4
+
+  # Naming conventions
+  revive:
+    rules:
+      - name: exported
+        arguments: [checkPrivateReceivers, sayRepetitiveInsteadOfStutters]
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: constant-logical-expr
+
+  # Unused code
+  unused:
+    check-exported: false
+
+  # Whitespace
+  wsl:
+    strict-append: true
+    allow-assign-and-call: true
+    allow-multiline-assign: true
+    allow-case-trailing-whitespace: true
+    allow-cuddle-declarations: false
+
+  # Govet settings
+  govet:
+    check-shadowing: true
+    settings:
+      printf:
+        funcs:
+          - (github.com/go-logr/logr.Logger).Infof
+          - (github.com/go-logr/logr.Logger).Warnf
+          - (github.com/go-logr/logr.Logger).Errorf
+          - (github.com/go-logr/logr.Logger).Fatalf
+
+  # Staticcheck settings
+  staticcheck:
+    go: "1.19"
+    checks: ["all"]
+
+  # Gosec security scanner
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104 # Audit errors not checked
+      - G204 # Subprocess launched with variable
+    exclude-generated: true
+
+  # Misspell
+  misspell:
+    locale: US
+    ignore-words:
+      - kubernetes
+      - n8n
+
+linters:
+  enable:
+    # Default linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+
+    # Additional linters
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - cyclop
+    - dupl
+    - durationcheck
+    - errname
+    - errorlint
+    - execinquery
+    - exhaustive
+    - exportloopref
+    - forbidigo
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - gofmt
+    - gofumpt
+    - goheader
+    - goimports
+    - gomnd
+    - gomoddirectives
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - grouper
+    - importas
+    - lll
+    - makezero
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - promlinter
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - stylecheck
+    - tenv
+    - testpackage
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+    - wsl
+
+  disable:
+    # Disabled linters (can be enabled if needed)
+    - containedctx
+    - decorder
+    - depguard
+    - dogsled
+    - errchkjson
+    - forcetypeassert
+    - gci
+    - godox
+    - goerr113
+    - gofmt # Disabled in favor of gofumpt
+    - golint # Deprecated
+    - interfacer # Deprecated
+    - maligned # Deprecated
+    - nlreturn
+    - nosprintfhostport
+    - paralleltest
+    - scopelint # Deprecated
+    - tagliatelle
+    - varnamelen
+    - wrapcheck
+
+issues:
+  # Maximum issues count per one linter
+  max-issues-per-linter: 0
+
+  # Maximum count of issues with the same text
+  max-same-issues: 0
+
+  # Show only new issues created after git revision
+  new: false
+
+  # Fix found issues (if it's supported by the linter)
+  fix: false
+
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+        - gocognit
+        - cyclop
+
+    # Exclude some linters from running on generated files
+    - path: zz_generated\..*\.go
+      linters:
+        - lll
+        - gochecknoglobals
+        - gochecknoinits
+
+    # Exclude some linters from running on main.go
+    - path: cmd/main\.go
+      linters:
+        - gochecknoinits
+
+    # Exclude some staticcheck messages
+    - linters:
+        - staticcheck
+      text: "SA9003:"
+
+    # Exclude some gosec messages
+    - linters:
+        - gosec
+      text: "G304:"
+
+    # Exclude some gocritic messages
+    - linters:
+        - gocritic
+      text: "unnecessaryDefer:"
+
+  exclude:
+    # Exclude common false positives
+    - 'declaration of "(err|ctx)" shadows declaration at'
+    - 'should have a package comment'
+    - 'don.t use an underscore in package name'
+
+severity:
+  default-severity: error
+  case-sensitive: false
+  rules:
+    - linters:
+        - dupl
+      severity: info
+    - linters:
+        - gocritic
+      severity: info

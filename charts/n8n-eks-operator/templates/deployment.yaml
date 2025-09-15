@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manager
+    control-plane: controller-manager
+  {{- with .Values.global.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not .Values.operator.autoscaling.enabled }}
+  replicas: {{ .Values.operator.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "n8n-eks-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: manager
+      control-plane: controller-manager
+  template:
+    metadata:
+      {{- with .Values.operator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "n8n-eks-operator.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: manager
+        control-plane: controller-manager
+        {{- with .Values.global.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "n8n-eks-operator.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
+      containers:
+      - name: manager
+        image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+        args:
+        - --leader-elect={{ .Values.config.operator.leaderElection.enabled }}
+        {{- if .Values.config.operator.leaderElection.resourceName }}
+        - --leader-election-id={{ .Values.config.operator.leaderElection.resourceName }}
+        {{- end }}
+        {{- if .Values.config.operator.leaderElection.resourceNamespace }}
+        - --leader-election-namespace={{ .Values.config.operator.leaderElection.resourceNamespace }}
+        {{- else }}
+        - --leader-election-namespace={{ .Release.Namespace }}
+        {{- end }}
+        - --metrics-bind-address={{ .Values.config.operator.metrics.bindAddress }}
+        - --health-probe-bind-address={{ .Values.config.operator.health.bindAddress }}
+        {{- if .Values.webhook.enabled }}
+        - --webhook-bind-address={{ .Values.config.operator.webhook.bindAddress }}
+        - --webhook-cert-dir={{ .Values.config.operator.webhook.certDir }}
+        {{- end }}
+        - --max-concurrent-reconciles={{ .Values.config.operator.maxConcurrentReconciles }}
+        - --reconcile-interval={{ .Values.config.operator.reconcileInterval }}
+        - --log-level={{ .Values.logging.level }}
+        - --log-format={{ .Values.logging.format }}
+        {{- if .Values.logging.development }}
+        - --development
+        {{- end }}
+        {{- if .Values.aws.region }}
+        - --aws-region={{ .Values.aws.region }}
+        {{- end }}
+        {{- if .Values.aws.cluster.name }}
+        - --cluster-name={{ .Values.aws.cluster.name }}
+        {{- end }}
+        env:
+        - name: WATCH_NAMESPACE
+          value: ""
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: OPERATOR_NAME
+          value: {{ include "n8n-eks-operator.fullname" . }}
+        {{- if .Values.aws.region }}
+        - name: AWS_REGION
+          value: {{ .Values.aws.region }}
+        {{- end }}
+        {{- if .Values.aws.cluster.name }}
+        - name: CLUSTER_NAME
+          value: {{ .Values.aws.cluster.name }}
+        {{- end }}
+        {{- with .Values.operator.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        ports:
+        - name: webhook-server
+          containerPort: 9443
+          protocol: TCP
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        livenessProbe:
+          {{- toYaml .Values.operator.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.operator.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.operator.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.operator.securityContext | nindent 10 }}
+        volumeMounts:
+        {{- if .Values.webhook.enabled }}
+        - name: cert
+          mountPath: {{ .Values.config.operator.webhook.certDir }}
+          readOnly: true
+        {{- end }}
+        - name: tmp
+          mountPath: /tmp
+        {{- with .Values.operator.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumes:
+      {{- if .Values.webhook.enabled }}
+      - name: cert
+        secret:
+          secretName: {{ include "n8n-eks-operator.webhookCertSecretName" . }}
+          defaultMode: 420
+      {{- end }}
+      - name: tmp
+        emptyDir: {}
+      {{- with .Values.operator.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10

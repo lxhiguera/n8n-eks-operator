@@ -1,0 +1,544 @@
+# Performance Optimized n8n Instance Example
+# This example shows advanced performance optimization configuration
+
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-performance-optimized
+  namespace: n8n-production
+  labels:
+    environment: production
+    app: n8n
+    tier: critical
+    performance-profile: high-performance
+  annotations:
+    n8n.io/performance-optimization: "enabled"
+    n8n.io/auto-tuning: "aggressive"
+    n8n.io/monitoring-level: "detailed"
+spec:
+  # n8n version
+  version: "1.0.0"
+  
+  # Domain
+  domain: "workflows-perf.company.com"
+  
+  # Performance-optimized component configuration
+  components:
+    main:
+      replicas: 3
+      
+      # Optimized resource allocation
+      resources:
+        requests:
+          cpu: "1000m"      # Higher baseline for performance
+          memory: "2Gi"     # More memory for caching
+        limits:
+          cpu: "4000m"      # Higher limits for burst capacity
+          memory: "8Gi"     # Generous memory limits
+      
+      # Aggressive autoscaling for performance
+      autoscaling:
+        enabled: true
+        minReplicas: 3
+        maxReplicas: 15     # Higher max for peak loads
+        targetCPU: 60       # Lower threshold for faster scaling
+        targetMemory: 70
+        
+        # Advanced HPA behavior for performance
+        behavior:
+          scaleUp:
+            stabilizationWindowSeconds: 30  # Faster scale up
+            policies:
+            - type: Percent
+              value: 200    # Aggressive scale up
+              periodSeconds: 15
+            - type: Pods
+              value: 5      # Add up to 5 pods at once
+              periodSeconds: 15
+          scaleDown:
+            stabilizationWindowSeconds: 300
+            policies:
+            - type: Percent
+              value: 50     # Moderate scale down
+              periodSeconds: 60
+      
+      # Performance-focused pod configuration
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 2
+      
+      # Node affinity for performance nodes
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - "performance"
+                - "compute-optimized"
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                  - main
+              topologyKey: kubernetes.io/hostname
+      
+      # Performance environment variables
+      env:
+        - name: NODE_ENV
+          value: "production"
+        - name: N8N_LOG_LEVEL
+          value: "warn"           # Reduce logging overhead
+        - name: N8N_METRICS
+          value: "true"
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=6144 --optimize-for-size"
+        - name: UV_THREADPOOL_SIZE
+          value: "16"             # Increase thread pool
+        - name: N8N_CACHE_ENABLED
+          value: "true"
+        - name: N8N_CACHE_TTL
+          value: "3600"
+        - name: N8N_EXECUTION_TIMEOUT
+          value: "1200"           # 20 minutes timeout
+        - name: N8N_MAX_EXECUTION_TIMEOUT
+          value: "3600"           # 1 hour max timeout
+    
+    webhook:
+      replicas: 3
+      
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2000m"
+          memory: "4Gi"
+      
+      autoscaling:
+        enabled: true
+        minReplicas: 3
+        maxReplicas: 12
+        targetCPU: 65
+        
+        # Custom metrics for webhook scaling
+        customMetrics:
+          - type: Pods
+            pods:
+              metric:
+                name: webhook_queue_depth
+              target:
+                type: AverageValue
+                averageValue: "5"
+      
+      # Webhook-specific performance settings
+      env:
+        - name: N8N_WEBHOOK_TIMEOUT
+          value: "30000"          # 30 second timeout
+        - name: N8N_WEBHOOK_MAX_PAYLOAD_SIZE
+          value: "16777216"       # 16MB max payload
+        - name: N8N_WEBHOOK_WORKERS
+          value: "4"              # Multiple workers per pod
+    
+    worker:
+      replicas: 8               # More workers for parallel processing
+      
+      resources:
+        requests:
+          cpu: "750m"
+          memory: "1.5Gi"
+        limits:
+          cpu: "3000m"
+          memory: "6Gi"
+      
+      autoscaling:
+        enabled: true
+        minReplicas: 8
+        maxReplicas: 30         # High scaling for worker load
+        targetCPU: 70
+        
+        # Queue-based scaling
+        customMetrics:
+          - type: Pods
+            pods:
+              metric:
+                name: job_queue_length
+              target:
+                type: AverageValue
+                averageValue: "3"
+      
+      # Worker-specific performance settings
+      env:
+        - name: N8N_WORKER_CONCURRENCY
+          value: "8"              # High concurrency per worker
+        - name: N8N_WORKER_MAX_EXECUTION_TIME
+          value: "3600000"        # 1 hour max execution
+        - name: N8N_WORKER_TIMEOUT
+          value: "120000"         # 2 minute timeout
+  
+  # High-performance database configuration
+  database:
+    type: "rds"
+    host: "n8n-perf-db.cluster-abc123.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_performance"
+    credentialsSecret: "n8n-perf-db-credentials"
+    ssl: true
+    sslMode: "require"
+    
+    # Performance-optimized connection pooling
+    connectionPooling:
+      enabled: true
+      maxConnections: 200       # Higher connection limit
+      minConnections: 20        # Higher minimum
+      idleTimeout: "10m"        # Shorter idle timeout
+      maxLifetime: "30m"        # Shorter max lifetime
+      acquireTimeout: "5s"      # Faster acquire timeout
+    
+    # Read replicas for performance
+    readReplicas:
+      enabled: true
+      hosts:
+        - "n8n-perf-db-ro-1.cluster-abc123.us-west-2.rds.amazonaws.com"
+        - "n8n-perf-db-ro-2.cluster-abc123.us-west-2.rds.amazonaws.com"
+        - "n8n-perf-db-ro-3.cluster-abc123.us-west-2.rds.amazonaws.com"
+      loadBalancing: "round-robin"
+    
+    # Performance tuning parameters
+    parameters:
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"
+      maintenance_work_mem: "512MB"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "16MB"
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "32MB"
+      min_wal_size: "1GB"
+      max_wal_size: "4GB"
+  
+  # High-performance cache configuration
+  cache:
+    type: "elasticache"
+    host: "n8n-perf-redis.abc123.cache.amazonaws.com"
+    port: 6379
+    credentialsSecret: "n8n-perf-redis-credentials"
+    ssl: true
+    
+    # Performance-optimized cache settings
+    cluster:
+      enabled: true
+      replicationGroupId: "n8n-perf-redis"
+      numCacheClusters: 6       # More cache nodes
+      nodeType: "cache.r6g.2xlarge"  # Larger instances
+      
+      # Performance parameters
+      parameters:
+        maxmemory-policy: "allkeys-lru"
+        timeout: "300"
+        tcp-keepalive: "60"
+        maxclients: "20000"
+        
+    # Optimized TTL settings
+    ttl:
+      default: "1800"           # 30 minutes
+      sessions: "7200"          # 2 hours
+      workflows: "3600"         # 1 hour
+      executions: "86400"       # 24 hours
+      cache: "600"              # 10 minutes
+  
+  # Performance-optimized storage
+  storage:
+    s3:
+      bucket: "n8n-performance-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+      
+      # Performance settings
+      multipartThreshold: "64MB"
+      multipartChunksize: "16MB"
+      maxConcurrency: 10
+      
+      # Transfer acceleration
+      transferAcceleration: true
+      
+    # High-performance persistent storage
+    persistent:
+      type: "ebs-csi"
+      storageClass: "gp3"
+      size: "500Gi"
+      
+      # Performance parameters
+      iops: 16000               # Maximum IOPS
+      throughput: 1000          # Maximum throughput MB/s
+      
+      # Performance optimizations
+      volumeBindingMode: "WaitForFirstConsumer"
+      allowVolumeExpansion: true
+  
+  # Comprehensive performance configuration
+  performance:
+    enabled: true
+    
+    # Auto-tuning configuration
+    autoTuning:
+      enabled: true
+      mode: "aggressive"        # Aggressive optimization
+      aggressiveness: "high"
+      safetyChecks: true
+      rollbackOnFailure: true
+      maxOptimizations: 10
+      optimizationWindow: "5m"
+      
+      # Excluded components (if any)
+      excludedComponents: []
+      
+      # Custom tuning rules
+      customRules:
+        - id: "cpu-scale-aggressive"
+          name: "Aggressive CPU Scaling"
+          condition: "cpu_utilization > 60"
+          action: "scale_up_cpu"
+          parameters:
+            scale_factor: 1.5
+          enabled: true
+          priority: 1
+        
+        - id: "memory-preemptive-scale"
+          name: "Preemptive Memory Scaling"
+          condition: "memory_utilization > 70"
+          action: "scale_up_memory"
+          parameters:
+            scale_factor: 1.3
+          enabled: true
+          priority: 2
+    
+    # Performance monitoring
+    monitoring:
+      enabled: true
+      interval: "15s"           # Frequent monitoring
+      retention: "30d"
+      
+      # Detailed metrics collection
+      metrics:
+        cpu:
+          enabled: true
+          detailed: true
+          thresholds:
+            warning: 60
+            critical: 80
+        memory:
+          enabled: true
+          detailed: true
+          thresholds:
+            warning: 70
+            critical: 85
+        network:
+          enabled: true
+          detailed: true
+          thresholds:
+            latency_warning: 50
+            latency_critical: 200
+        storage:
+          enabled: true
+          detailed: true
+          thresholds:
+            iops_warning: 12000
+            iops_critical: 15000
+        database:
+          enabled: true
+          detailed: true
+          thresholds:
+            connection_warning: 70
+            connection_critical: 85
+            query_latency_warning: 100
+            query_latency_critical: 500
+        cache:
+          enabled: true
+          detailed: true
+          thresholds:
+            hit_rate_warning: 85
+            hit_rate_critical: 70
+        application:
+          enabled: true
+          detailed: true
+          thresholds:
+            response_time_warning: 500
+            response_time_critical: 2000
+            error_rate_warning: 1
+            error_rate_critical: 5
+    
+    # Performance profiles
+    profiles:
+      - name: "high-throughput"
+        description: "Optimized for high throughput workloads"
+        resourceLimits:
+          cpu:
+            min: "2000m"
+            max: "8000m"
+            default: "4000m"
+          memory:
+            min: "4Gi"
+            max: "16Gi"
+            default: "8Gi"
+        optimizations:
+          - id: "aggressive-scaling"
+            type: "scaling"
+            priority: "high"
+          - id: "connection-pooling"
+            type: "database"
+            priority: "high"
+      
+      - name: "low-latency"
+        description: "Optimized for low latency responses"
+        resourceLimits:
+          cpu:
+            min: "1000m"
+            max: "6000m"
+            default: "3000m"
+          memory:
+            min: "2Gi"
+            max: "12Gi"
+            default: "6Gi"
+        optimizations:
+          - id: "cache-optimization"
+            type: "caching"
+            priority: "critical"
+          - id: "preemptive-scaling"
+            type: "scaling"
+            priority: "high"
+    
+    # Active profile
+    activeProfile: "high-throughput"
+    
+    # Performance alerts
+    alerts:
+      enabled: true
+      
+      # Alert thresholds
+      thresholds:
+        performance_score_critical: 40
+        performance_score_warning: 60
+        bottleneck_duration_warning: "5m"
+        bottleneck_duration_critical: "15m"
+      
+      # Notification channels
+      notifications:
+        webhook:
+          enabled: true
+          url: "https://alerts.company.com/webhooks/n8n-performance"
+        slack:
+          enabled: true
+          channel: "#n8n-performance"
+          webhookUrl: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+        pagerduty:
+          enabled: true
+          serviceKey: "your-pagerduty-service-key"
+        email:
+          enabled: true
+          recipients:
+            - "performance-team@company.com"
+            - "devops@company.com"
+  
+  # Networking optimizations
+  networking:
+    # DNS optimization
+    dns:
+      provider: "route53"
+      zoneId: "Z123456789"
+      ttl: 60                   # Lower TTL for faster failover
+    
+    # SSL optimization
+    ssl:
+      provider: "acm"
+      certificateArn: "arn:aws:acm:us-west-2:123456789012:certificate/def456"
+      
+      # Performance settings
+      sessionCache: true
+      sessionTimeout: "1h"
+      
+    # Load balancer optimization
+    loadBalancer:
+      type: "application"
+      scheme: "internet-facing"
+      
+      # Performance settings
+      idleTimeout: "60s"
+      connectionDraining: "30s"
+      
+      # Target group optimization
+      targetGroup:
+        healthCheck:
+          enabled: true
+          path: "/healthz"
+          interval: 15          # Faster health checks
+          timeout: 5
+          healthyThreshold: 2
+          unhealthyThreshold: 2
+        
+        # Stickiness for performance
+        stickiness:
+          enabled: true
+          type: "lb_cookie"
+          duration: "3600"      # 1 hour stickiness
+  
+  # Security with performance considerations
+  security:
+    podSecurityStandard: "restricted"
+    
+    # Optimized network policies
+    networkPolicies:
+      enabled: true
+      
+      # Performance-friendly rules
+      allowRules:
+        - name: "allow-high-performance"
+          description: "Optimized for performance"
+          ports:
+            - port: 5678
+              protocol: "TCP"
+            - port: 5679
+              protocol: "TCP"
+            - port: 6379
+              protocol: "TCP"
+            - port: 5432
+              protocol: "TCP"
+          from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: "n8n"
+
+---
+# Performance-optimized secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-perf-db-credentials
+  namespace: n8n-production
+type: Opaque
+stringData:
+  username: "n8n_perf"
+  password: "high-performance-password"
+  host: "n8n-perf-db.cluster-abc123.us-west-2.rds.amazonaws.com"
+  port: "5432"
+  database: "n8n_performance"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-perf-redis-credentials
+  namespace: n8n-production
+type: Opaque
+stringData:
+  host: "n8n-perf-redis.abc123.cache.amazonaws.com"
+  port: "6379"
+  auth-token: "performance-redis-token"

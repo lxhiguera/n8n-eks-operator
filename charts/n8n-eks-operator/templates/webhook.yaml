@@ -1,0 +1,72 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionWebhook
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-mutating-webhook-configuration
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.webhook.certificate.certManager.enabled }}
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "n8n-eks-operator.webhookCertSecretName" . }}
+    {{- end }}
+    {{- with .Values.global.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ include "n8n-eks-operator.fullname" . }}-webhook-service
+      namespace: {{ .Release.Namespace }}
+      path: /mutate-n8n-io-v1alpha1-n8ninstance
+  failurePolicy: Fail
+  name: mn8ninstance.kb.io
+  rules:
+  - apiGroups:
+    - n8n.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - n8ninstances
+  sideEffects: None
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-validating-webhook-configuration
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.webhook.certificate.certManager.enabled }}
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "n8n-eks-operator.webhookCertSecretName" . }}
+    {{- end }}
+    {{- with .Values.global.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: {{ include "n8n-eks-operator.fullname" . }}-webhook-service
+      namespace: {{ .Release.Namespace }}
+      path: /validate-n8n-io-v1alpha1-n8ninstance
+  failurePolicy: Fail
+  name: vn8ninstance.kb.io
+  rules:
+  - apiGroups:
+    - n8n.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - n8ninstances
+  sideEffects: None
+{{- end }}

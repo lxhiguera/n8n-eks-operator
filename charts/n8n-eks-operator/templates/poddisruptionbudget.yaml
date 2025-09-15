@@ -1,0 +1,26 @@
+{{- if .Values.operator.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manager
+  {{- with .Values.global.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.operator.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.operator.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.operator.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.operator.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "n8n-eks-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: manager
+      control-plane: controller-manager
+{{- end }}

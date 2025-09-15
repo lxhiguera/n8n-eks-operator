@@ -1,0 +1,117 @@
+apiVersion: v2
+name: n8n-eks-operator
+description: A Helm chart for the n8n EKS Operator - Kubernetes operator for managing n8n instances on Amazon EKS
+type: application
+version: 0.1.0
+appVersion: "v0.1.0"
+
+keywords:
+  - n8n
+  - workflow
+  - automation
+  - kubernetes
+  - operator
+  - eks
+  - aws
+
+home: https://github.com/n8n-io/n8n-eks-operator
+sources:
+  - https://github.com/n8n-io/n8n-eks-operator
+
+maintainers:
+  - name: n8n Team
+    email: support@n8n.io
+    url: https://n8n.io
+
+annotations:
+  category: Workflow Automation
+  licenses: Apache-2.0
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Full Lifecycle
+  artifacthub.io/crds: |
+    - kind: N8nInstance
+      version: v1alpha1
+      name: n8ninstances.n8n.io
+      displayName: N8n Instance
+      description: Represents an n8n workflow automation instance
+  artifacthub.io/crdsExamples: |
+    - apiVersion: n8n.io/v1alpha1
+      kind: N8nInstance
+      metadata:
+        name: my-n8n
+        namespace: default
+      spec:
+        version: "1.0.0"
+        domain: "my-n8n.example.com"
+        components:
+          main:
+            replicas: 2
+            resources:
+              requests:
+                cpu: "200m"
+                memory: "256Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+          webhook:
+            replicas: 1
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+          worker:
+            replicas: 3
+            resources:
+              requests:
+                cpu: "150m"
+                memory: "192Mi"
+        database:
+          type: "rds"
+          host: "my-postgres.cluster-xxx.us-west-2.rds.amazonaws.com"
+          port: 5432
+          name: "n8n"
+          credentialsSecret: "n8n-db-credentials"
+        cache:
+          type: "elasticache"
+          host: "my-redis.xxx.cache.amazonaws.com"
+          port: 6379
+        storage:
+          s3:
+            bucket: "my-n8n-storage"
+            region: "us-west-2"
+          persistent:
+            storageClass: "gp3"
+            size: "10Gi"
+        monitoring:
+          metrics:
+            enabled: true
+            prometheus:
+              enabled: true
+              serviceMonitor: true
+          logging:
+            level: "info"
+        security:
+          podSecurityStandard: "restricted"
+          networkPolicies:
+            enabled: true
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial release of n8n EKS Operator Helm chart
+    - kind: added
+      description: Support for n8n workflow automation instances
+    - kind: added
+      description: AWS RDS PostgreSQL integration
+    - kind: added
+      description: AWS ElastiCache Redis integration
+    - kind: added
+      description: AWS S3 storage integration
+    - kind: added
+      description: Prometheus monitoring integration
+    - kind: added
+      description: Pod Security Standards compliance
+    - kind: added
+      description: Network policies support
+  artifacthub.io/recommendations: |
+    - url: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
+    - url: https://artifacthub.io/packages/helm/aws/aws-load-balancer-controller
+    - url: https://artifacthub.io/packages/helm/jetstack/cert-manager

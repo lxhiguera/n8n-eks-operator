@@ -1,0 +1,173 @@
+# Values for staging environment
+
+# Operator configuration for staging
+operator:
+  replicaCount: 1
+  
+  image:
+    repository: ghcr.io/n8n-io/n8n-eks-operator
+    pullPolicy: Always
+    tag: "staging"
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Enable autoscaling in staging for testing
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  
+  # Pod disruption budget for testing
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  
+  # Environment variables for staging
+  env:
+    - name: LOG_LEVEL
+      value: "debug"
+    - name: ENVIRONMENT
+      value: "staging"
+
+# Enable webhooks in staging
+webhook:
+  enabled: true
+  certificate:
+    certManager:
+      enabled: false
+    selfSigned:
+      enabled: true
+
+# Enable RBAC
+rbac:
+  create: true
+
+# Enable monitoring in staging
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+  grafanaDashboard:
+    enabled: true
+
+# Logging configuration for staging
+logging:
+  level: debug
+  format: json
+  development: true
+
+# AWS configuration for staging
+aws:
+  region: "us-west-2"
+  defaultTags:
+    Environment: staging
+    Team: platform
+    Project: n8n-eks-operator
+  cluster:
+    name: "n8n-staging-cluster"
+    region: "us-west-2"
+
+# Enable network policies in staging
+networkPolicies:
+  enabled: true
+  egress:
+    allowDNS: true
+    allowHTTPS: true
+    # Allow access to AWS services
+    toCIDRs:
+      - cidr: "0.0.0.0/0"
+        ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 5432  # PostgreSQL
+          - protocol: TCP
+            port: 6379  # Redis
+
+# Pod Security Standards for staging
+podSecurityStandards:
+  enforce: "restricted"
+  audit: "restricted"
+  warn: "restricted"
+
+# Default N8nInstance configuration for staging
+defaultN8nInstance:
+  version: "1.0.0"
+  
+  components:
+    main:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "300m"
+          memory: "384Mi"
+    
+    webhook:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "150m"
+          memory: "192Mi"
+    
+    worker:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+  
+  storage:
+    persistent:
+      storageClass: "gp3"
+      size: "5Gi"
+      autoExpansion: true
+  
+  monitoring:
+    metrics:
+      enabled: true
+    logging:
+      level: "debug"
+  
+  security:
+    podSecurityStandard: "restricted"
+    networkPolicies:
+      enabled: true
+
+# Configuration for staging
+config:
+  operator:
+    reconcileInterval: "15s"
+    maxConcurrentReconciles: 5
+    
+    leaderElection:
+      enabled: true
+      resourceName: "n8n-eks-operator-leader-election-staging"
+    
+    metrics:
+      bindAddress: "0.0.0.0:8080"
+    
+    health:
+      bindAddress: "0.0.0.0:8081"
+
+# Enable tests
+tests:
+  enabled: true

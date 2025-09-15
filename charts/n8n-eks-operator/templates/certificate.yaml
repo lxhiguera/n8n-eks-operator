@@ -1,0 +1,68 @@
+{{- if and .Values.webhook.enabled .Values.webhook.certificate.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-serving-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+  {{- with .Values.global.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  dnsNames:
+  - {{ include "n8n-eks-operator.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc
+  - {{ include "n8n-eks-operator.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    {{- if .Values.webhook.certificate.certManager.issuerRef }}
+    {{- toYaml .Values.webhook.certificate.certManager.issuerRef | nindent 4 }}
+    {{- else }}
+    kind: Issuer
+    name: {{ .Values.webhook.certificate.certManager.issuer | default (printf "%s-selfsigned-issuer" (include "n8n-eks-operator.fullname" .)) }}
+    {{- end }}
+  secretName: {{ include "n8n-eks-operator.webhookCertSecretName" . }}
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+
+---
+{{- if not .Values.webhook.certificate.certManager.issuerRef }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.webhook.certificate.certManager.issuer | default (printf "%s-selfsigned-issuer" (include "n8n-eks-operator.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+  {{- with .Values.global.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selfSigned: {}
+{{- end }}
+{{- end }}
+
+{{- if and .Values.webhook.enabled .Values.webhook.certificate.selfSigned.enabled (not .Values.webhook.certificate.certManager.enabled) (not .Values.webhook.certificate.custom.enabled) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "n8n-eks-operator.webhookCertSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    {{- with .Values.global.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ include "n8n-eks-operator.webhookCert" . | b64enc }}
+  tls.key: {{ include "n8n-eks-operator.webhookKey" . | b64enc }}
+{{- end }}

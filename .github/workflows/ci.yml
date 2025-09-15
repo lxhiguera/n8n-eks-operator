@@ -1,0 +1,477 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.19'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Code quality and linting
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=10m
+          
+      - name: Check Go formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "The following files are not formatted:"
+            gofmt -s -l .
+            exit 1
+          fi
+          
+      - name: Check Go modules
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  # Unit tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Install dependencies
+        run: go mod download
+        
+      - name: Run unit tests
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          
+      - name: Generate coverage report
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out | tail -1 | awk '{print "Total coverage: " $3}'
+          
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+          retention-days: 7
+
+  # Integration tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-integration-tests')
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+          
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+        if: github.event_name != 'pull_request'
+        
+      - name: Install dependencies
+        run: go mod download
+        
+      - name: Run integration tests
+        working-directory: test/integration
+        env:
+          RUN_INTEGRATION_TESTS: true
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          make test
+          
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: integration-test-results
+          path: test/integration/integration-results.json
+          retention-days: 7
+
+  # Security tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Install security tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          
+      - name: Run vulnerability scan
+        run: |
+          govulncheck ./...
+          
+      - name: Run security tests
+        working-directory: test/security
+        run: |
+          make test-ci
+          
+      - name: Upload security test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-test-results
+          path: |
+            test/security/security-results.json
+            test/security/vulnerability-scan-results.txt
+          retention-days: 7
+
+  # Performance tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-performance-tests')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Install dependencies
+        run: go mod download
+        
+      - name: Run performance tests
+        working-directory: test/performance
+        env:
+          PERF_TEST_TIMEOUT: 15m
+          PERF_CONCURRENT_INSTANCES: 5
+          PERF_RECONCILE_ITERATIONS: 20
+        run: |
+          make test-ci
+          
+      - name: Upload performance test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-test-results
+          path: test/performance/performance-results.json
+          retention-days: 7
+
+  # Build and test Docker image
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # E2E tests
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-e2e-tests')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Setup Kind
+        uses: helm/kind-action@v1.8.0
+        with:
+          version: v0.20.0
+          kubectl_version: v1.28.0
+          cluster_name: n8n-e2e
+          config: |
+            kind: Cluster
+            apiVersion: kind.x-k8s.io/v1alpha4
+            nodes:
+            - role: control-plane
+              image: kindest/node:v1.28.0
+            - role: worker
+              image: kindest/node:v1.28.0
+              
+      - name: Load Docker image into Kind
+        run: |
+          docker pull ${{ needs.build-image.outputs.image-tag }}
+          kind load docker-image ${{ needs.build-image.outputs.image-tag }} --name n8n-e2e
+          
+      - name: Deploy operator
+        run: |
+          make deploy IMG=${{ needs.build-image.outputs.image-tag }}
+          kubectl wait --for=condition=available --timeout=300s deployment/n8n-eks-operator-controller-manager -n n8n-system
+          
+      - name: Run E2E tests
+        working-directory: test/e2e
+        env:
+          RUN_E2E_TESTS: true
+          USE_REAL_CLUSTER: true
+          OPERATOR_IMAGE: ${{ needs.build-image.outputs.image-tag }}
+        run: |
+          make test
+          
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Operator Logs ==="
+          kubectl logs -l app.kubernetes.io/name=n8n-eks-operator -n n8n-system --tail=100 || true
+          echo "=== Test Resources ==="
+          kubectl get all -l test-suite=n8n-e2e --all-namespaces || true
+          
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: e2e-test-results
+          path: test/e2e/e2e-results.json
+          retention-days: 7
+
+  # Generate test report
+  test-report:
+    name: Generate Test Report
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, security-tests, performance-tests, e2e-tests]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: test-results
+          
+      - name: Generate comprehensive test report
+        run: |
+          echo "# Test Report for ${{ github.sha }}" > test-report.md
+          echo "" >> test-report.md
+          echo "## Summary" >> test-report.md
+          echo "" >> test-report.md
+          
+          # Unit tests
+          if [ -f "test-results/coverage-report/coverage.out" ]; then
+            echo "### Unit Tests" >> test-report.md
+            echo "✅ Unit tests completed" >> test-report.md
+            echo "" >> test-report.md
+          fi
+          
+          # Integration tests
+          if [ -f "test-results/integration-test-results/integration-results.json" ]; then
+            echo "### Integration Tests" >> test-report.md
+            echo "✅ Integration tests completed" >> test-report.md
+            echo "" >> test-report.md
+          fi
+          
+          # Security tests
+          if [ -f "test-results/security-test-results/security-results.json" ]; then
+            echo "### Security Tests" >> test-report.md
+            echo "✅ Security tests completed" >> test-report.md
+            echo "" >> test-report.md
+          fi
+          
+          # Performance tests
+          if [ -f "test-results/performance-test-results/performance-results.json" ]; then
+            echo "### Performance Tests" >> test-report.md
+            echo "✅ Performance tests completed" >> test-report.md
+            echo "" >> test-report.md
+          fi
+          
+          # E2E tests
+          if [ -f "test-results/e2e-test-results/e2e-results.json" ]; then
+            echo "### End-to-End Tests" >> test-report.md
+            echo "✅ E2E tests completed" >> test-report.md
+            echo "" >> test-report.md
+          fi
+          
+          echo "## Build Information" >> test-report.md
+          echo "- Commit: ${{ github.sha }}" >> test-report.md
+          echo "- Branch: ${{ github.ref_name }}" >> test-report.md
+          echo "- Workflow: ${{ github.workflow }}" >> test-report.md
+          echo "- Run ID: ${{ github.run_id }}" >> test-report.md
+          
+      - name: Upload test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: comprehensive-test-report
+          path: test-report.md
+          retention-days: 30
+          
+      - name: Comment PR with test results
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const testReport = fs.readFileSync('test-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: testReport
+            });
+
+  # Quality gates
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, security-tests, build-image]
+    if: always()
+    steps:
+      - name: Check quality gate
+        run: |
+          echo "Checking quality gate..."
+          
+          # Check if all required jobs passed
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "❌ Lint check failed"
+            exit 1
+          fi
+          
+          if [[ "${{ needs.unit-tests.result }}" != "success" ]]; then
+            echo "❌ Unit tests failed"
+            exit 1
+          fi
+          
+          if [[ "${{ needs.security-tests.result }}" != "success" ]]; then
+            echo "❌ Security tests failed"
+            exit 1
+          fi
+          
+          if [[ "${{ needs.build-image.result }}" != "success" ]]; then
+            echo "❌ Image build failed"
+            exit 1
+          fi
+          
+          echo "✅ All quality gates passed"

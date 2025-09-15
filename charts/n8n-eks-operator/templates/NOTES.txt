@@ -1,0 +1,172 @@
+🎉 Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }} and has been deployed to namespace {{ .Release.Namespace }}.
+
+📋 INSTALLATION SUMMARY:
+  Chart Version: {{ .Chart.Version }}
+  App Version: {{ .Chart.AppVersion }}
+  Operator Replicas: {{ .Values.operator.replicaCount }}
+  {{- if .Values.operator.autoscaling.enabled }}
+  Autoscaling: Enabled ({{ .Values.operator.autoscaling.minReplicas }}-{{ .Values.operator.autoscaling.maxReplicas }} replicas)
+  {{- else }}
+  Autoscaling: Disabled
+  {{- end }}
+  {{- if .Values.webhook.enabled }}
+  Webhooks: Enabled
+  {{- else }}
+  Webhooks: Disabled
+  {{- end }}
+  {{- if .Values.monitoring.enabled }}
+  Monitoring: Enabled
+  {{- else }}
+  Monitoring: Disabled
+  {{- end }}
+
+🔍 TO CHECK THE STATUS OF YOUR DEPLOYMENT:
+
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "n8n-eks-operator.name" . }}
+
+🚀 TO CREATE YOUR FIRST N8N INSTANCE:
+
+  Create a file named 'my-n8n.yaml' with the following content:
+
+  ---
+  apiVersion: n8n.io/v1alpha1
+  kind: N8nInstance
+  metadata:
+    name: my-n8n
+    namespace: default
+  spec:
+    version: "{{ .Values.defaultN8nInstance.version }}"
+    domain: "my-n8n.example.com"
+    components:
+      main:
+        replicas: {{ .Values.defaultN8nInstance.components.main.replicas }}
+        resources:
+          requests:
+            cpu: "{{ .Values.defaultN8nInstance.components.main.resources.requests.cpu }}"
+            memory: "{{ .Values.defaultN8nInstance.components.main.resources.requests.memory }}"
+          limits:
+            cpu: "{{ .Values.defaultN8nInstance.components.main.resources.limits.cpu }}"
+            memory: "{{ .Values.defaultN8nInstance.components.main.resources.limits.memory }}"
+      webhook:
+        replicas: {{ .Values.defaultN8nInstance.components.webhook.replicas }}
+      worker:
+        replicas: {{ .Values.defaultN8nInstance.components.worker.replicas }}
+    storage:
+      persistent:
+        storageClass: "{{ .Values.defaultN8nInstance.storage.persistent.storageClass }}"
+        size: "{{ .Values.defaultN8nInstance.storage.persistent.size }}"
+    {{- if .Values.defaultN8nInstance.monitoring.metrics.enabled }}
+    monitoring:
+      metrics:
+        enabled: true
+    {{- end }}
+    {{- if .Values.defaultN8nInstance.security.networkPolicies.enabled }}
+    security:
+      podSecurityStandard: "{{ .Values.defaultN8nInstance.security.podSecurityStandard }}"
+      networkPolicies:
+        enabled: true
+    {{- end }}
+
+  Then apply it:
+  kubectl apply -f my-n8n.yaml
+
+📊 TO MONITOR YOUR N8N INSTANCES:
+
+  # List all N8nInstances
+  kubectl get n8ninstances --all-namespaces
+
+  # Get detailed information about a specific instance
+  kubectl describe n8ninstance my-n8n -n default
+
+  # Check the status and events
+  kubectl get events --field-selector involvedObject.kind=N8nInstance -n default
+
+{{- if .Values.monitoring.enabled }}
+
+📈 MONITORING:
+
+  {{- if .Values.monitoring.serviceMonitor.enabled }}
+  - ServiceMonitor created for Prometheus scraping
+  {{- end }}
+  {{- if .Values.monitoring.grafanaDashboard.enabled }}
+  - Grafana dashboard ConfigMap created
+  {{- end }}
+  
+  To view operator metrics:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "n8n-eks-operator.fullname" . }}-controller-manager-metrics-service 8080:8443
+  
+  Then visit: http://localhost:8080/metrics
+
+{{- end }}
+
+{{- if .Values.webhook.enabled }}
+
+🔒 WEBHOOKS:
+
+  Admission webhooks are enabled for validation and mutation of N8nInstance resources.
+  {{- if .Values.webhook.certificate.certManager.enabled }}
+  Certificate management: cert-manager
+  {{- else if .Values.webhook.certificate.custom.enabled }}
+  Certificate management: Custom certificate
+  {{- else }}
+  Certificate management: Self-signed certificate
+  {{- end }}
+
+{{- end }}
+
+{{- if .Values.networkPolicies.enabled }}
+
+🛡️  NETWORK POLICIES:
+
+  Network policies are enabled to secure operator communications.
+  Make sure your CNI supports NetworkPolicy enforcement.
+
+{{- end }}
+
+🔧 CONFIGURATION:
+
+  To customize the operator configuration, update your values.yaml file and run:
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} -f values.yaml
+
+📚 DOCUMENTATION:
+
+  - Chart Documentation: https://github.com/n8n-io/n8n-eks-operator/tree/main/charts/n8n-eks-operator
+  - Operator Documentation: https://github.com/n8n-io/n8n-eks-operator
+  - n8n Documentation: https://docs.n8n.io
+
+🐛 TROUBLESHOOTING:
+
+  If you encounter issues:
+
+  1. Check operator logs:
+     kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "n8n-eks-operator.name" . }}
+
+  2. Check operator status:
+     kubectl get deployment -n {{ .Release.Namespace }} {{ include "n8n-eks-operator.fullname" . }}-controller-manager
+
+  3. Verify CRDs are installed:
+     kubectl get crd n8ninstances.n8n.io
+
+  4. Check for events:
+     kubectl get events -n {{ .Release.Namespace }} --sort-by='.lastTimestamp'
+
+💡 TIPS:
+
+  - Use kubectl describe to get detailed information about resources
+  - Check the operator logs for reconciliation details
+  - Ensure your AWS credentials and permissions are properly configured
+  - Review the N8nInstance status for any error conditions
+
+🎯 NEXT STEPS:
+
+  1. Create your first N8nInstance (see example above)
+  2. Configure your database and cache connections
+  3. Set up monitoring and alerting
+  4. Configure ingress and SSL certificates
+  5. Review security settings and network policies
+
+Happy automating with n8n! 🚀
+
+For support and questions, visit: https://github.com/n8n-io/n8n-eks-operator/issues

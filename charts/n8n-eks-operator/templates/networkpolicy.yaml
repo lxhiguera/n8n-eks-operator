@@ -1,0 +1,136 @@
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "n8n-eks-operator.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manager
+  {{- with .Values.global.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "n8n-eks-operator.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: manager
+      control-plane: controller-manager
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow webhook traffic
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 9443
+  # Allow metrics scraping
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow health checks
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 8081
+  {{- with .Values.networkPolicies.ingress.fromNamespaces }}
+  # Allow from specific namespaces
+  - from:
+    {{- range . }}
+    - namespaceSelector:
+        matchLabels:
+          name: {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.networkPolicies.ingress.fromPods }}
+  # Allow from specific pods
+  - from:
+    {{- range . }}
+    - podSelector:
+        matchLabels:
+          {{- toYaml . | nindent 10 }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.networkPolicies.ingress.fromCIDRs }}
+  # Allow from specific CIDRs
+  - from:
+    {{- range . }}
+    - ipBlock:
+        cidr: {{ .cidr }}
+        {{- if .except }}
+        except:
+        {{- range .except }}
+        - {{ . }}
+        {{- end }}
+        {{- end }}
+    {{- end }}
+  {{- end }}
+  egress:
+  {{- if .Values.networkPolicies.egress.allowDNS }}
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  {{- end }}
+  {{- if .Values.networkPolicies.egress.allowHTTPS }}
+  # Allow HTTPS to internet
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  {{- end }}
+  # Allow Kubernetes API server access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6443
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  {{- with .Values.networkPolicies.egress.toNamespaces }}
+  # Allow to specific namespaces
+  - to:
+    {{- range . }}
+    - namespaceSelector:
+        matchLabels:
+          name: {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.networkPolicies.egress.toPods }}
+  # Allow to specific pods
+  - to:
+    {{- range . }}
+    - podSelector:
+        matchLabels:
+          {{- toYaml . | nindent 10 }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.networkPolicies.egress.toCIDRs }}
+  # Allow to specific CIDRs/ports
+  {{- range . }}
+  - to:
+    - ipBlock:
+        cidr: {{ .cidr }}
+        {{- if .except }}
+        except:
+        {{- range .except }}
+        - {{ . }}
+        {{- end }}
+        {{- end }}
+    {{- if .ports }}
+    ports:
+    {{- range .ports }}
+    - protocol: {{ .protocol | default "TCP" }}
+      port: {{ .port }}
+    {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- end }}
+{{- end }}

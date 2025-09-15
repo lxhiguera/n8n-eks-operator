@@ -1,0 +1,70 @@
+# Chart Testing Configuration
+# https://github.com/helm/chart-testing
+
+# Directories containing charts
+chart-dirs:
+  - charts
+
+# Charts to exclude from testing
+excluded-charts: []
+
+# Repositories to add for dependency resolution
+chart-repos:
+  - bitnami=https://charts.bitnami.com/bitnami
+  - prometheus-community=https://prometheus-community.github.io/helm-charts
+  - grafana=https://grafana.github.io/helm-charts
+  - jetstack=https://charts.jetstack.io
+  - ingress-nginx=https://kubernetes.github.io/ingress-nginx
+
+# Helm version to use
+helm-version: v3.13.0
+
+# Kubernetes versions to test against
+k8s-versions:
+  - v1.26.0
+  - v1.27.0
+  - v1.28.0
+
+# Linting configuration
+lint-conf: .github/lintconf.yaml
+
+# Check version increment
+check-version-increment: true
+
+# Validate maintainers in Chart.yaml
+validate-maintainers: true
+
+# Additional Helm arguments for install/upgrade
+helm-extra-args: --timeout=600s
+
+# Additional arguments for helm dependency build
+helm-dependency-extra-args: --skip-refresh
+
+# Target branch for detecting changed charts
+target-branch: main
+
+# Remote repository URL (used for version increment check)
+remote: origin
+
+# Additional values files to use for testing
+additional-commands:
+  - helm unittest charts/n8n-eks-operator
+
+# Test configuration
+test-config:
+  # Namespace to install charts into
+  namespace: ct-testing
+  
+  # Release name template
+  release-name-template: "ct-{{ .Chart.Name }}-{{ randAlphaNum 6 | lower }}"
+  
+  # Upgrade test configuration
+  upgrade-test:
+    enabled: true
+    
+  # Install test configuration  
+  install-test:
+    enabled: true
+    
+  # Cleanup after tests
+  cleanup: true

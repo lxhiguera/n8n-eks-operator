@@ -1,0 +1,237 @@
+# Values for production environment
+
+# Operator configuration for production
+operator:
+  replicaCount: 2
+  
+  image:
+    repository: ghcr.io/n8n-io/n8n-eks-operator
+    pullPolicy: IfNotPresent
+    # tag will be set by CI/CD pipeline
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Enable autoscaling in production
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  
+  # Pod disruption budget for high availability
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  
+  # Production environment variables
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+    - name: ENVIRONMENT
+      value: "production"
+  
+  # Node selector for production nodes
+  nodeSelector:
+    node-type: "operator"
+    environment: "production"
+  
+  # Tolerations for dedicated nodes
+  tolerations:
+    - key: "operator"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  
+  # Anti-affinity for high availability
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - n8n-eks-operator
+            topologyKey: kubernetes.io/hostname
+
+# Enable webhooks in production
+webhook:
+  enabled: true
+  certificate:
+    certManager:
+      enabled: true
+      issuer: "letsencrypt-prod"
+    selfSigned:
+      enabled: false
+
+# Enable RBAC with additional security
+rbac:
+  create: true
+  # Additional rules can be added here if needed
+
+# Enable comprehensive monitoring in production
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    additionalLabels:
+      release: prometheus
+  grafanaDashboard:
+    enabled: true
+    labels:
+      grafana_dashboard: "1"
+      grafana_folder: "n8n"
+
+# Production logging configuration
+logging:
+  level: info
+  format: json
+  development: false
+
+# AWS configuration for production
+aws:
+  region: "us-west-2"
+  defaultTags:
+    Environment: production
+    Team: platform
+    Project: n8n-eks-operator
+    CostCenter: "engineering"
+    Owner: "platform-team"
+  cluster:
+    name: "n8n-production-cluster"
+    region: "us-west-2"
+  serviceAccount:
+    # IRSA role ARN for production
+    roleArn: "arn:aws:iam::ACCOUNT-ID:role/n8n-eks-operator-production"
+
+# Strict network policies for production
+networkPolicies:
+  enabled: true
+  ingress:
+    # Allow from monitoring namespace
+    fromNamespaces:
+      - name: "monitoring"
+    # Allow from istio-system for service mesh
+    fromNamespaces:
+      - name: "istio-system"
+  egress:
+    allowDNS: true
+    allowHTTPS: true
+    # Specific egress rules for AWS services
+    toCIDRs:
+      # AWS API endpoints
+      - cidr: "0.0.0.0/0"
+        ports:
+          - protocol: TCP
+            port: 443
+      # RDS PostgreSQL
+      - cidr: "10.0.0.0/8"
+        ports:
+          - protocol: TCP
+            port: 5432
+      # ElastiCache Redis
+      - cidr: "10.0.0.0/8"
+        ports:
+          - protocol: TCP
+            port: 6379
+
+# Strict Pod Security Standards for production
+podSecurityStandards:
+  enforce: "restricted"
+  audit: "restricted"
+  warn: "restricted"
+
+# Production-optimized N8nInstance defaults
+defaultN8nInstance:
+  version: "1.0.0"
+  
+  components:
+    main:
+      replicas: 2
+      resources:
+        requests:
+          cpu: "300m"
+          memory: "384Mi"
+        limits:
+          cpu: "800m"
+          memory: "1Gi"
+    
+    webhook:
+      replicas: 2
+      resources:
+        requests:
+          cpu: "150m"
+          memory: "192Mi"
+        limits:
+          cpu: "400m"
+          memory: "512Mi"
+    
+    worker:
+      replicas: 3
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "256Mi"
+        limits:
+          cpu: "500m"
+          memory: "768Mi"
+  
+  storage:
+    persistent:
+      storageClass: "gp3"
+      size: "20Gi"
+      autoExpansion: true
+  
+  monitoring:
+    metrics:
+      enabled: true
+    logging:
+      level: "info"
+  
+  security:
+    podSecurityStandard: "restricted"
+    networkPolicies:
+      enabled: true
+
+# Production operator configuration
+config:
+  operator:
+    reconcileInterval: "30s"
+    maxConcurrentReconciles: 10
+    
+    leaderElection:
+      enabled: true
+      resourceName: "n8n-eks-operator-leader-election-production"
+    
+    metrics:
+      bindAddress: "0.0.0.0:8080"
+    
+    health:
+      bindAddress: "0.0.0.0:8081"
+    
+    webhook:
+      bindAddress: "0.0.0.0:9443"
+      certDir: "/tmp/k8s-webhook-server/serving-certs"
+
+# Global production settings
+global:
+  labels:
+    environment: production
+    team: platform
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+
+# Disable tests in production
+tests:
+  enabled: false

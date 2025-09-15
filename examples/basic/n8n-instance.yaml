@@ -1,0 +1,113 @@
+# Basic n8n Instance Example
+# This example shows a minimal configuration for development or testing
+
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-basic
+  namespace: default
+  labels:
+    environment: development
+    app: n8n
+spec:
+  # n8n version to deploy
+  version: "1.0.0"
+  
+  # Domain for accessing n8n (optional)
+  domain: "n8n-dev.example.com"
+  
+  # Component configuration
+  components:
+    # Main component (UI and API)
+    main:
+      replicas: 1
+      port: 5678
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+      
+      # Environment variables for n8n main component
+      env:
+        - name: N8N_LOG_LEVEL
+          value: "info"
+        - name: N8N_METRICS
+          value: "true"
+    
+    # Webhook component (handles incoming webhooks)
+    webhook:
+      replicas: 1
+      port: 5679
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+    
+    # Worker component (executes workflows)
+    worker:
+      replicas: 1
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+  
+  # Database configuration
+  database:
+    type: "rds"
+    host: "n8n-dev-db.cluster-xxx.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_dev"
+    credentialsSecret: "n8n-db-credentials"
+    ssl: false  # Disable SSL for development
+  
+  # Storage configuration
+  storage:
+    # S3 bucket for workflow files and assets
+    s3:
+      bucket: "n8n-dev-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+    
+    # Persistent volume for temporary files
+    persistent:
+      storageClass: "gp3"
+      size: "5Gi"
+      accessMode: "ReadWriteOnce"
+  
+  # Basic monitoring
+  monitoring:
+    metrics:
+      enabled: true
+    logging:
+      level: "info"
+      format: "json"
+  
+  # Basic security settings
+  security:
+    podSecurityStandard: "baseline"
+    networkPolicies:
+      enabled: false  # Disabled for development
+
+---
+# Secret for database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-db-credentials
+  namespace: default
+type: Opaque
+stringData:
+  username: "n8n"
+  password: "dev-password"
+  host: "n8n-dev-db.cluster-xxx.us-west-2.rds.amazonaws.com"
+  port: "5432"
+  database: "n8n_dev"

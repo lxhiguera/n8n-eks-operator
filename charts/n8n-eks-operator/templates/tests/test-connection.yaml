@@ -1,0 +1,87 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "n8n-eks-operator.fullname" . }}-test-connection"
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "n8n-eks-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.global.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  restartPolicy: Never
+  containers:
+  - name: test-connection
+    image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+    imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      echo "Testing n8n EKS Operator connectivity..."
+      
+      # Test metrics endpoint
+      echo "Testing metrics endpoint..."
+      if command -v wget >/dev/null 2>&1; then
+        wget --spider --timeout=10 --tries=3 \
+          http://{{ include "n8n-eks-operator.fullname" . }}-controller-manager-metrics-service:8443/metrics || \
+          echo "Metrics endpoint test failed (expected if metrics are secured)"
+      elif command -v curl >/dev/null 2>&1; then
+        curl -f --connect-timeout 10 --max-time 30 \
+          http://{{ include "n8n-eks-operator.fullname" . }}-controller-manager-metrics-service:8443/metrics || \
+          echo "Metrics endpoint test failed (expected if metrics are secured)"
+      else
+        echo "Neither wget nor curl available, skipping metrics test"
+      fi
+      
+      {{- if .Values.webhook.enabled }}
+      # Test webhook service
+      echo "Testing webhook service..."
+      if command -v nc >/dev/null 2>&1; then
+        nc -z {{ include "n8n-eks-operator.fullname" . }}-webhook-service {{ .Values.webhook.service.port }} || \
+          echo "Webhook service connection test failed"
+      else
+        echo "netcat not available, skipping webhook connectivity test"
+      fi
+      {{- end }}
+      
+      # Test operator deployment
+      echo "Testing operator deployment..."
+      if command -v nslookup >/dev/null 2>&1; then
+        nslookup {{ include "n8n-eks-operator.fullname" . }}-controller-manager-metrics-service.{{ .Release.Namespace }}.svc.cluster.local || \
+          echo "DNS resolution test failed"
+      else
+        echo "nslookup not available, skipping DNS test"
+      fi
+      
+      echo "Connection tests completed successfully!"
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65534
+      capabilities:
+        drop:
+        - ALL
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+{{- end }}

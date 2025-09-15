@@ -1,0 +1,664 @@
+# Multi-Region n8n Instance Example
+# This example shows a production-ready multi-region setup with disaster recovery
+
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  name: n8n-multi-region
+  namespace: n8n-production
+  labels:
+    environment: production
+    app: n8n
+    tier: critical
+  annotations:
+    n8n.io/disaster-recovery: "enabled"
+    n8n.io/rto-target: "5m"
+    n8n.io/rpo-target: "1m"
+spec:
+  # n8n version
+  version: "1.0.0"
+  
+  # Primary domain
+  domain: "workflows.company.com"
+  
+  # High-availability component configuration
+  components:
+    main:
+      replicas: 3
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2000m"
+          memory: "4Gi"
+      
+      autoscaling:
+        enabled: true
+        minReplicas: 3
+        maxReplicas: 10
+        targetCPU: 70
+      
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 2
+    
+    webhook:
+      replicas: 2
+      autoscaling:
+        enabled: true
+        minReplicas: 2
+        maxReplicas: 8
+        targetCPU: 75
+    
+    worker:
+      replicas: 5
+      autoscaling:
+        enabled: true
+        minReplicas: 5
+        maxReplicas: 20
+        targetCPU: 80
+  
+  # Multi-region configuration
+  multiRegion:
+    enabled: true
+    primaryRegion: "us-west-2"
+    
+    # Secondary regions configuration
+    regions:
+      - name: "us-east-1"
+        enabled: true
+        priority: 1  # Primary failover target
+        
+        # Database replica configuration
+        databaseReplica:
+          enabled: true
+          instanceClass: "db.r6g.xlarge"
+          multiAZ: true
+          backupRetentionPeriod: 7
+          preferredBackupWindow: "03:00-04:00"
+          preferredMaintenanceWindow: "sun:04:00-sun:05:00"
+        
+        # Storage replication configuration
+        storageReplication:
+          enabled: true
+          bucket: "n8n-production-workflows-us-east-1"
+          storageClass: "STANDARD_IA"
+          replicationTime: "15m"
+        
+        # Network configuration
+        networking:
+          vpcId: "vpc-east1-12345"
+          subnetIds:
+            - "subnet-east1-private-1a"
+            - "subnet-east1-private-1b"
+            - "subnet-east1-private-1c"
+          securityGroupIds:
+            - "sg-east1-n8n-12345"
+          
+          # Load balancer configuration
+          loadBalancer:
+            type: "application"
+            scheme: "internet-facing"
+            subnets:
+              - "subnet-east1-public-1a"
+              - "subnet-east1-public-1b"
+              - "subnet-east1-public-1c"
+        
+        # Monitoring configuration
+        monitoring:
+          enabled: true
+          cloudWatch:
+            enabled: true
+            namespace: "N8N/Production/USEast1"
+          
+          # Health checks
+          healthChecks:
+            - name: "database-health"
+              type: "rds"
+              interval: "30s"
+              timeout: "5s"
+              threshold: 3
+            - name: "storage-health"
+              type: "s3"
+              interval: "60s"
+              timeout: "10s"
+              threshold: 2
+      
+      - name: "eu-west-1"
+        enabled: true
+        priority: 2  # Secondary failover target
+        
+        # Database replica configuration
+        databaseReplica:
+          enabled: true
+          instanceClass: "db.r6g.large"
+          multiAZ: true
+          backupRetentionPeriod: 7
+        
+        # Storage replication configuration
+        storageReplication:
+          enabled: true
+          bucket: "n8n-production-workflows-eu-west-1"
+          storageClass: "STANDARD_IA"
+          replicationTime: "30m"
+        
+        # Network configuration
+        networking:
+          vpcId: "vpc-euwest1-67890"
+          subnetIds:
+            - "subnet-euwest1-private-1a"
+            - "subnet-euwest1-private-1b"
+            - "subnet-euwest1-private-1c"
+          securityGroupIds:
+            - "sg-euwest1-n8n-67890"
+        
+        # Monitoring configuration
+        monitoring:
+          enabled: true
+          cloudWatch:
+            enabled: true
+            namespace: "N8N/Production/EUWest1"
+    
+    # Failover configuration
+    failover:
+      # Automatic failover settings
+      automaticFailover: true
+      healthCheckInterval: "30s"
+      failoverThreshold: 3  # Number of consecutive failures before failover
+      
+      # Recovery time and point objectives
+      rtoTarget: "5m"   # Recovery Time Objective
+      rpoTarget: "1m"   # Recovery Point Objective
+      
+      # Failover conditions
+      conditions:
+        - type: "database-unavailable"
+          enabled: true
+          threshold: 3
+          interval: "30s"
+        - type: "application-unhealthy"
+          enabled: true
+          threshold: 5
+          interval: "60s"
+        - type: "region-outage"
+          enabled: true
+          threshold: 1
+          interval: "300s"
+      
+      # DNS failover configuration
+      dns:
+        provider: "route53"
+        hostedZoneId: "Z123456789"
+        healthCheckId: "hc-n8n-primary"
+        failoverType: "PRIMARY"
+        ttl: 60
+        
+        # Failover records
+        records:
+          - name: "workflows.company.com"
+            type: "A"
+            primary:
+              region: "us-west-2"
+              loadBalancerDNS: "n8n-alb-usw2.elb.amazonaws.com"
+            secondary:
+              region: "us-east-1"
+              loadBalancerDNS: "n8n-alb-use1.elb.amazonaws.com"
+    
+    # Replication configuration
+    replication:
+      # Database replication
+      database:
+        enabled: true
+        mode: "async"  # async or sync
+        syncInterval: "5s"
+        lagThreshold: "10s"
+        
+        # Cross-region backup
+        crossRegionBackup:
+          enabled: true
+          schedule: "0 2 * * *"
+          retentionDays: 30
+      
+      # Storage replication
+      storage:
+        enabled: true
+        mode: "cross-region"
+        syncInterval: "15m"
+        
+        # S3 Cross-Region Replication
+        s3Replication:
+          enabled: true
+          rules:
+            - id: "workflows-replication"
+              status: "Enabled"
+              prefix: "workflows/"
+              destinationBucket: "n8n-production-workflows-replica"
+              destinationRegion: "us-east-1"
+              storageClass: "STANDARD_IA"
+            - id: "credentials-replication"
+              status: "Enabled"
+              prefix: "credentials/"
+              destinationBucket: "n8n-production-workflows-replica"
+              destinationRegion: "us-east-1"
+              storageClass: "STANDARD_IA"
+              encryption: "AES256"
+      
+      # Configuration replication
+      configuration:
+        enabled: true
+        syncInterval: "5m"
+        
+        # Kubernetes resources to replicate
+        resources:
+          - "secrets"
+          - "configmaps"
+          - "n8ninstances"
+    
+    # Notifications configuration
+    notifications:
+      enabled: true
+      
+      # Webhook notifications
+      webhookURL: "https://alerts.company.com/webhooks/n8n-dr"
+      
+      # SNS notifications
+      snsTopicArn: "arn:aws:sns:us-west-2:123456789012:n8n-disaster-recovery"
+      
+      # Slack notifications
+      slack:
+        enabled: true
+        webhookURL: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+        channel: "#n8n-alerts"
+      
+      # PagerDuty integration
+      pagerduty:
+        enabled: true
+        serviceKey: "your-pagerduty-service-key"
+      
+      # Email notifications
+      email:
+        enabled: true
+        smtpServer: "smtp.company.com"
+        from: "n8n-alerts@company.com"
+        to:
+          - "devops@company.com"
+          - "sre@company.com"
+  
+  # Primary region database configuration
+  database:
+    type: "rds"
+    host: "n8n-prod.cluster-abc123.us-west-2.rds.amazonaws.com"
+    port: 5432
+    name: "n8n_production"
+    credentialsSecret: "n8n-prod-db-credentials"
+    ssl: true
+    sslMode: "require"
+    
+    # High availability configuration
+    multiAZ: true
+    backupRetentionPeriod: 7
+    preferredBackupWindow: "03:00-04:00"
+    preferredMaintenanceWindow: "sun:04:00-sun:05:00"
+    
+    # Performance configuration
+    instanceClass: "db.r6g.2xlarge"
+    allocatedStorage: 1000
+    maxAllocatedStorage: 5000
+    storageType: "gp3"
+    iops: 12000
+    
+    # Monitoring
+    performanceInsightsEnabled: true
+    monitoringInterval: 60
+    
+    # Read replicas (managed by multi-region config)
+    readReplicas:
+      enabled: false  # Managed by multi-region configuration
+  
+  # Cache configuration with multi-region support
+  cache:
+    type: "elasticache"
+    host: "n8n-prod-redis.abc123.cache.amazonaws.com"
+    port: 6379
+    credentialsSecret: "n8n-prod-redis-credentials"
+    ssl: true
+    
+    # Cluster configuration
+    cluster:
+      enabled: true
+      replicationGroupId: "n8n-prod-redis"
+      numCacheClusters: 3
+      nodeType: "cache.r6g.xlarge"
+      
+      # Multi-AZ configuration
+      multiAZ: true
+      automaticFailover: true
+      
+      # Backup configuration
+      snapshotRetentionLimit: 7
+      snapshotWindow: "03:00-05:00"
+      
+      # Global datastore for cross-region replication
+      globalDatastore:
+        enabled: true
+        globalReplicationGroupId: "n8n-global-redis"
+        primaryReplicationGroupId: "n8n-prod-redis-usw2"
+  
+  # Storage configuration with multi-region replication
+  storage:
+    # Primary S3 bucket
+    s3:
+      bucket: "n8n-production-workflows"
+      region: "us-west-2"
+      prefix: "workflows/"
+      encryption: "AES256"
+      versioning: true
+      
+      # Cross-region replication (managed by multi-region config)
+      replication:
+        enabled: false  # Managed by multi-region configuration
+      
+      # Lifecycle policies
+      lifecyclePolicy:
+        enabled: true
+        rules:
+          - id: "transition-to-ia"
+            status: "Enabled"
+            transitions:
+              - days: 30
+                storageClass: "STANDARD_IA"
+              - days: 90
+                storageClass: "GLACIER"
+              - days: 365
+                storageClass: "DEEP_ARCHIVE"
+    
+    # CloudFront for global distribution
+    cloudfront:
+      enabled: true
+      domain: "cdn.workflows.company.com"
+      certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc123"
+      
+      # Origins for different regions
+      origins:
+        - id: "primary-origin"
+          domainName: "n8n-production-workflows.s3.us-west-2.amazonaws.com"
+          region: "us-west-2"
+          primary: true
+        - id: "failover-origin"
+          domainName: "n8n-production-workflows-us-east-1.s3.us-east-1.amazonaws.com"
+          region: "us-east-1"
+          primary: false
+      
+      # Cache behaviors
+      behaviors:
+        - pathPattern: "/assets/*"
+          targetOriginId: "primary-origin"
+          viewerProtocolPolicy: "redirect-to-https"
+          cachePolicyId: "CachingOptimized"
+          originRequestPolicyId: "CORS-S3Origin"
+        - pathPattern: "/api/*"
+          targetOriginId: "primary-origin"
+          viewerProtocolPolicy: "redirect-to-https"
+          cachePolicyId: "CachingDisabled"
+    
+    # Persistent volumes
+    persistent:
+      type: "ebs-csi"
+      storageClass: "gp3"
+      size: "100Gi"
+      autoExpansion: true
+      
+      # Cross-AZ replication
+      replication:
+        enabled: true
+        zones:
+          - "us-west-2a"
+          - "us-west-2b"
+          - "us-west-2c"
+  
+  # Networking with multi-region DNS
+  networking:
+    # DNS configuration
+    dns:
+      provider: "route53"
+      zoneId: "Z123456789"
+      
+      # Health checks for failover
+      healthChecks:
+        - id: "primary-health-check"
+          fqdn: "workflows.company.com"
+          port: 443
+          type: "HTTPS"
+          resourcePath: "/healthz"
+          interval: 30
+          failureThreshold: 3
+          regions:
+            - "us-west-1"
+            - "us-east-1"
+            - "eu-west-1"
+        
+        - id: "secondary-health-check"
+          fqdn: "workflows-dr.company.com"
+          port: 443
+          type: "HTTPS"
+          resourcePath: "/healthz"
+          interval: 30
+          failureThreshold: 3
+    
+    # SSL/TLS configuration
+    ssl:
+      provider: "acm"
+      certificates:
+        - region: "us-west-2"
+          certificateArn: "arn:aws:acm:us-west-2:123456789012:certificate/primary-cert"
+          domains:
+            - "workflows.company.com"
+            - "*.workflows.company.com"
+        - region: "us-east-1"
+          certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/failover-cert"
+          domains:
+            - "workflows.company.com"
+            - "*.workflows.company.com"
+  
+  # Comprehensive monitoring for multi-region
+  monitoring:
+    metrics:
+      enabled: true
+      
+      # Prometheus configuration
+      prometheus:
+        enabled: true
+        serviceMonitor: true
+        interval: "30s"
+        
+        # Multi-region metrics
+        federationTargets:
+          - region: "us-east-1"
+            endpoint: "https://prometheus-use1.monitoring.company.com"
+          - region: "eu-west-1"
+            endpoint: "https://prometheus-euw1.monitoring.company.com"
+      
+      # CloudWatch configuration
+      cloudwatch:
+        enabled: true
+        namespace: "N8N/Production/MultiRegion"
+        
+        # Cross-region dashboards
+        dashboards:
+          - name: "N8N Multi-Region Overview"
+            region: "us-west-2"
+            widgets:
+              - type: "metric"
+                properties:
+                  metrics:
+                    - ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "n8n-prod-primary"]
+                    - ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "n8n-prod-replica-use1"]
+                  period: 300
+                  stat: "Average"
+                  region: "us-west-2"
+                  title: "Database Connections"
+    
+    # Logging configuration
+    logging:
+      level: "info"
+      format: "json"
+      
+      # CloudWatch Logs
+      cloudwatch:
+        enabled: true
+        logGroups:
+          - region: "us-west-2"
+            logGroup: "/aws/eks/n8n-production/primary"
+            retention: 30
+          - region: "us-east-1"
+            logGroup: "/aws/eks/n8n-production/failover"
+            retention: 30
+    
+    # Alerting configuration
+    alerts:
+      enabled: true
+      
+      # Multi-region alert rules
+      rules:
+        - name: "PrimaryRegionDown"
+          condition: "up{region=\"us-west-2\"} == 0"
+          duration: "2m"
+          severity: "critical"
+          actions:
+            - "trigger-failover"
+            - "notify-oncall"
+        
+        - name: "ReplicationLag"
+          condition: "mysql_slave_lag_seconds > 30"
+          duration: "5m"
+          severity: "warning"
+          actions:
+            - "notify-team"
+        
+        - name: "CrossRegionSyncFailed"
+          condition: "s3_replication_failed == 1"
+          duration: "1m"
+          severity: "warning"
+          actions:
+            - "notify-team"
+  
+  # Security configuration for multi-region
+  security:
+    podSecurityStandard: "restricted"
+    
+    # Network policies
+    networkPolicies:
+      enabled: true
+      denyAll: true
+      
+      # Cross-region communication rules
+      allowRules:
+        - name: "allow-cross-region-replication"
+          from:
+            - namespaceSelector:
+                matchLabels:
+                  name: "n8n-production"
+          to:
+            - namespaceSelector:
+                matchLabels:
+                  name: "n8n-production"
+          ports:
+            - port: 5432
+              protocol: "TCP"
+            - port: 6379
+              protocol: "TCP"
+            - port: 443
+              protocol: "TCP"
+    
+    # RBAC for multi-region
+    rbac:
+      enabled: true
+      
+      # Cross-region service accounts
+      crossRegionAccess:
+        enabled: true
+        regions:
+          - "us-east-1"
+          - "eu-west-1"
+    
+    # Secrets management
+    secrets:
+      encryption: true
+      
+      # Cross-region secret replication
+      crossRegionReplication:
+        enabled: true
+        regions:
+          - "us-east-1"
+          - "eu-west-1"
+        
+        # Secrets to replicate
+        secrets:
+          - "n8n-prod-db-credentials"
+          - "n8n-prod-redis-credentials"
+          - "n8n-ssl-certificates"
+  
+  # Backup configuration for multi-region
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    
+    # Cross-region backup
+    crossRegion:
+      enabled: true
+      regions:
+        - "us-east-1"
+        - "eu-west-1"
+    
+    # Backup retention
+    retention:
+      daily: 7
+      weekly: 4
+      monthly: 12
+      yearly: 5
+    
+    # S3 backup configuration
+    s3:
+      bucket: "n8n-production-backups"
+      region: "us-west-2"
+      encryption: "AES256"
+      
+      # Cross-region replication for backups
+      replication:
+        enabled: true
+        destinationBucket: "n8n-production-backups-replica"
+        destinationRegion: "us-east-1"
+
+---
+# Secrets for multi-region setup
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-prod-db-credentials
+  namespace: n8n-production
+type: Opaque
+stringData:
+  username: "n8n_prod"
+  password: "super-secure-production-password"
+  host: "n8n-prod.cluster-abc123.us-west-2.rds.amazonaws.com"
+  port: "5432"
+  database: "n8n_production"
+  # Replica endpoints
+  replica-us-east-1: "n8n-prod-replica.cluster-def456.us-east-1.rds.amazonaws.com"
+  replica-eu-west-1: "n8n-prod-replica.cluster-ghi789.eu-west-1.rds.amazonaws.com"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-prod-redis-credentials
+  namespace: n8n-production
+type: Opaque
+stringData:
+  host: "n8n-prod-redis.abc123.cache.amazonaws.com"
+  port: "6379"
+  auth-token: "redis-auth-token"
+  # Replica endpoints
+  replica-us-east-1: "n8n-prod-redis.def456.cache.amazonaws.com"
+  replica-eu-west-1: "n8n-prod-redis.ghi789.cache.amazonaws.com"

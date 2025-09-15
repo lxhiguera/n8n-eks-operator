@@ -1,0 +1,217 @@
+apiVersion: n8n.io/v1alpha1
+kind: N8nInstance
+metadata:
+  labels:
+    app.kubernetes.io/name: n8ninstance
+    app.kubernetes.io/instance: n8ninstance-sample
+    app.kubernetes.io/part-of: n8n-eks-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: n8n-eks-operator
+  name: n8ninstance-sample
+spec:
+  version: "1.0.0"
+  domain: "n8n.example.com"
+  
+  database:
+    type: rds-postgresql
+    rds:
+      endpoint: "my-cluster.cluster-xxx.us-west-2.rds.amazonaws.com"
+      port: 5432
+      databaseName: "n8n"
+      credentialsSource: "secrets-manager"
+      secretsManagerArn: "arn:aws:secretsmanager:us-west-2:123456789012:secret:n8n-db-credentials"
+      sslMode: "require"
+      connectionPooling:
+        enabled: true
+        maxConnections: 20
+        idleTimeout: "30s"
+  
+  cache:
+    type: elasticache-redis
+    redis:
+      endpoint: "my-redis.xxx.cache.amazonaws.com"
+      port: 6379
+      clusterMode: false
+      authEnabled: true
+      credentialsSource: "secrets-manager"
+      secretsManagerArn: "arn:aws:secretsmanager:us-west-2:123456789012:secret:n8n-redis-auth"
+      tlsEnabled: true
+      ttlDefault: "1h"
+  
+  storage:
+    workflows:
+      type: s3
+      s3:
+        bucketName: "my-n8n-workflows"
+        region: "us-west-2"
+        encryption:
+          enabled: true
+          kmsKeyId: "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
+        versioning: true
+        lifecycle:
+          enabled: true
+          transitionToIA: "30d"
+          transitionToGlacier: "90d"
+    
+    assets:
+      type: s3-cloudfront
+      s3:
+        bucketName: "my-n8n-assets"
+        region: "us-west-2"
+        allowedFileTypes: ["jpg", "jpeg", "png", "gif", "pdf", "doc", "docx", "xls", "xlsx"]
+        maxFileSize: "10MB"
+        encryption:
+          enabled: true
+      cloudfront:
+        enabled: true
+        customDomain: "assets.n8n.example.com"
+    
+    persistent:
+      type: ebs-csi
+      storageClass: "gp3"
+      size: "20Gi"
+      autoExpansion: true
+      snapshotPolicy:
+        enabled: true
+        schedule: "0 2 * * *"
+        retention: "7d"
+  
+  components:
+    main:
+      replicas: 2
+      port: 5678
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+      autoscaling:
+        enabled: true
+        minReplicas: 2
+        maxReplicas: 10
+        targetCPU: 70
+        targetMemory: 80
+    
+    webhook:
+      replicas: 3
+      port: 5679
+      subdomain: "webhooks"
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "512Mi"
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+      autoscaling:
+        enabled: true
+        minReplicas: 3
+        maxReplicas: 20
+        targetCPU: 70
+    
+    worker:
+      replicas: 5
+      subdomain: "workers"
+      resources:
+        requests:
+          cpu: "300m"
+          memory: "768Mi"
+        limits:
+          cpu: "1.5"
+          memory: "3Gi"
+      autoscaling:
+        enabled: true
+        minReplicas: 5
+        maxReplicas: 50
+        targetCPU: 80
+  
+  networking:
+    dns:
+      provider: route53
+      route53:
+        hostedZoneId: "Z123456789ABCDEF"
+        createZone: false
+    
+    ssl:
+      provider: acm
+      acm:
+        autoValidation: true
+        validationMethod: "DNS"
+    
+    istio:
+      enabled: true
+      gateway:
+        name: "n8n-gateway"
+        hosts:
+          - "n8n.example.com"
+          - "webhooks.n8n.example.com"
+      virtualService:
+        timeout: "30s"
+        retries: 3
+      authorizationPolicy:
+        enabled: true
+        allowedSources:
+          - "istio-system/istio-ingressgateway"
+  
+  security:
+    secretsManagement:
+      provider: "secrets-manager"
+      rotation:
+        enabled: true
+        schedule: "0 0 1 * *"
+      encryption:
+        enabled: true
+        kmsKeyId: "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
+    
+    iam:
+      serviceAccountName: "n8n-service-account"
+      roleArn: "arn:aws:iam::123456789012:role/n8n-eks-role"
+      policies:
+        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+    
+    networkPolicies:
+      enabled: true
+      denyAll: true
+      allowedIngress:
+        - from: "istio-system"
+          ports: [5678, 5679]
+        - from: "monitoring"
+          ports: [8080]
+  
+  monitoring:
+    metrics:
+      enabled: true
+      prometheus:
+        enabled: true
+        serviceMonitor: true
+      cloudwatch:
+        enabled: true
+        namespace: "N8N/EKS"
+        retention: 30
+    
+    logging:
+      level: "info"
+      cloudwatch:
+        enabled: true
+        logGroup: "/aws/eks/n8n"
+        retention: 30
+    
+    alerts:
+      enabled: true
+      sns:
+        topicArn: "arn:aws:sns:us-west-2:123456789012:n8n-alerts"
+      rules:
+        - name: "HighCPUUsage"
+          condition: "cpu_usage > 80"
+          threshold: "80%"
+          severity: "warning"
+        - name: "HighMemoryUsage"
+          condition: "memory_usage > 90"
+          threshold: "90%"
+          severity: "critical"
+        - name: "PodCrashLooping"
+          condition: "pod_restarts > 5"
+          threshold: "5"
+          severity: "critical"
