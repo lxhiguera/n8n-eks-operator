@@ -3,7 +3,7 @@
 ## ✅ Project Status: COMPLETED (100%)
 
 **Repository**: https://github.com/lxhiguera/n8n-eks-operator  
-**Release**: v1.0.0 - Production Ready  
+**Release**: v0.1.0 - Initial Alpha Release  
 **Date**: December 15, 2024
 
 ---
@@ -204,7 +204,7 @@ n8n-eks-operator/
 
 ### Immediate Actions
 1. **✅ Repository Published**: https://github.com/lxhiguera/n8n-eks-operator
-2. **✅ Release Created**: v1.0.0 with comprehensive release notes
+2. **✅ Release Created**: v0.1.0 with comprehensive release notes
 3. **✅ Documentation Complete**: Ready for community use
 
 ### Future Enhancements

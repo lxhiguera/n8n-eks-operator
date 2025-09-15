@@ -41,7 +41,7 @@ operator:
   replicaCount: 1
   image:
     repository: "ghcr.io/lxhiguera/n8n-eks-operator"
-    tag: "v1.0.0"
+    tag: "v0.1.0"
     pullPolicy: IfNotPresent
 
 monitoring:

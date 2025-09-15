@@ -160,8 +160,8 @@ spec:
 4. **Test Features**: `make local-test`
 
 ### For Production Use
-1. **Build Image**: `podman build -t n8n-eks-operator:v1.0.0 .`
-2. **Push to Registry**: `podman push n8n-eks-operator:v1.0.0 your-registry`
+1. **Build Image**: `podman build -t n8n-eks-operator:v0.1.0 .`
+2. **Push to Registry**: `podman push n8n-eks-operator:v0.1.0 your-registry`
 3. **Deploy to EKS**: Use Helm charts in `charts/`
 
 ## 🏆 Achievement Summary

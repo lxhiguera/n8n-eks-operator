@@ -40,7 +40,7 @@ helm install n8n-operator ./charts/n8n-eks-operator
 ```bash
 # Install with custom values
 helm install n8n-operator ./charts/n8n-eks-operator \
-  --set operator.image.tag=v1.0.0 \
+  --set operator.image.tag=v0.1.0 \
   --set monitoring.enabled=true \
   --set webhook.enabled=true
 ```
